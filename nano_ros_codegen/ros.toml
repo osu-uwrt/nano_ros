@@ -1,0 +1,21 @@
+[board]
+name = "foo_board"
+transport = "can" # can be usb or can
+
+[[topics]]
+name = "imu_data"
+direction = "publisher"
+ros_type = "sensor_msgs/Imu"
+qos = "default"
+
+[[topics]]
+name = "bit_sub"
+direction = "subscriber"
+ros_type = "std_msgs/UInt8"
+qos = "default"
+
+[[topics]]
+name = "firmware_status"
+direction = "publisher"
+ros_type = "riptide_msgs/FirmwareStatus"
+qos = "default"
