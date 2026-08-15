@@ -100,7 +100,7 @@ compile
 colcon build
 ```
 
-for now, youre on your own soldier
+for now, you're on your own soldier
 
 
 
