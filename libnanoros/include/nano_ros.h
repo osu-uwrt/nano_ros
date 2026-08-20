@@ -35,6 +35,9 @@ typedef uint8_t nros_qos_flags_t;
 extern const nros_topic_t nros_topics[];
 extern const uint8_t nros_topic_count;
 
+bool nros_init(nros_transport_t *t, bool packet_oriented);
+void nros_spin();
+
 bool nros_publish(uint8_t topic_id, nros_serialize_fn fn, const void* msg);
 
 #endif // NANO_ROS_H

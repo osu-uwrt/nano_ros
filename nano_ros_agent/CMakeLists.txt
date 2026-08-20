@@ -21,18 +21,32 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
+add_subdirectory(
+    ${CMAKE_CURRENT_SOURCE_DIR}/../common
+    ${CMAKE_CURRENT_BINARY_DIR}/common
+)
+
+
 add_executable(nano_ros_agent 
     src/server.cpp
     src/client_handler.cpp
     src/transport/can.cpp
     src/transport/serial.cpp
 )
-ament_target_dependencies(nano_ros_agent rclcpp)
+
+# ament_target_dependencies(nano_ros_agent rclcpp)
+
+target_link_libraries(nano_ros_agent PRIVATE
+    nano_ros_common
+    rclcpp::rclcpp
+)
+
 
 target_include_directories(nano_ros_agent PUBLIC 
-    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
+    #${CMAKE_CURRENT_SOURCE_DIR}/../common/include
     include/nano_ros_agent/transport
     include/nano_ros_agent
 )
+
 
 ament_package()

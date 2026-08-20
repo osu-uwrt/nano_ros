@@ -3,14 +3,20 @@
 
 #include <stdint.h>
 
+#define NROS_MAGIC0 0xAA
+#define NROS_MAGIC1 0x55
+#define NROS_BUFFER_SIZE 1024
+
 typedef enum {
     NROS_PACKET_REGISTER = 0x01, // register topics or reregister if coming from host
     NROS_PACKET_DATA     = 0x02, // pub / sub data
     NROS_PACKET_ACK      = 0x03, // with status
     NROS_PACKET_REGISTER_DONE = 0x04, // marks registration as done
+    NROS_PACKET_DISCOVER = 0x05, // from agent to tell mcu to give up its topics
 } nros_packet_type_t;
 
 typedef struct {
+    uint8_t magic[2];
     uint8_t type; // assigned to with the packet type enum
     uint8_t topic_id;
     uint16_t length;
