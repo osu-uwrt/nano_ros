@@ -1,6 +1,6 @@
-use std::env::args;
+use std::{env::args, fmt::format};
 use std::path::PathBuf;
-use anyhow::{Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 
 use crate::ros_toml_schema::NanoRosConfig;
 mod ros_toml_schema;
@@ -67,6 +67,17 @@ fn parse_args(args: &[String]) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
     Ok((toml_path, ros_prefix, user_types_path, out_dir))
 }
 
+/// Requires exactly "pkg/msg/Name".
+pub fn validate_topic_type(type_path: &str) -> Result<()> {
+    match type_path.split('/').collect::<Vec<_>>().as_slice() {
+        [pkg, "msg", name] if !pkg.is_empty() && !name.is_empty() => Ok(()),
+        _ => Err(anyhow!(
+            "invalid ros_type '{}': expected 'pkg/msg/Name' (e.g. 'sensor_msgs/msg/Imu')",
+            type_path
+        )),
+    }
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = args().collect();
     let (toml_path, ros_prefix, user_types, out_dir) = parse_args(&args)?;
@@ -79,21 +90,26 @@ fn main() -> Result<()> {
 
     println!("[nano_ros_codegen] Board: {board_name}, Transport: {:?}", &config.board.transport);
 
+    let resolver = MsgResolver::new(&ros_prefix, &user_types)?;
+
     for topic in &mut config.topics {
-        //println!("\nsearching for [{:?}]\n", topic.ros_type);
-        let path = find_ros_msg_file(&ros_prefix, &topic.ros_type, &user_types)?;
-        //println!("path to type: {}", path.display());
-        let fields = parse_msg_file(&ros_prefix, &user_types, &path)?;
-        // for field in &fields {
-        //     println!("FIELD NAME: {}", field.name);
-        //     match &field.field_type {
-        //         FieldType::Primitive(prim) => { println!("PRIMITIVE FIELD...")},
-        //         FieldType::PrimArray(prim, len) => { println!("PRIMITIVE ARRAY OF SIZE: {}", len)},
-        //         FieldType::Nested(type_name, nested_fields ) => {println!("NESTED TYPE: {}", type_name)},
-        //         FieldType::NestedArray(type_name, nested_fields , len) => { println!("ARRAY OF NESTED TYPE: {}", type_name)}
-        //     }
-        // }
-        topic.fields = fields;
+        validate_topic_type(&topic.msg_type).with_context(|| format!("topic '{}'", topic.name))?;
+        topic.fields = resolver.parse_type(&topic.msg_type).with_context(|| format!("Resolving topic type '{}'", topic.msg_type))?;
+
+        // //println!("\nsearching for [{:?}]\n", topic.ros_type);
+        // let path = find_ros_msg_file(&ros_prefix, &topic.ros_type, &user_types)?;
+        // //println!("path to type: {}", path.display());
+        // let fields = parse_msg_file(&ros_prefix, &user_types, &path)?;
+        // // for field in &fields {
+        // //     println!("FIELD NAME: {}", field.name);
+        // //     match &field.field_type {
+        // //         FieldType::Primitive(prim) => { println!("PRIMITIVE FIELD...")},
+        // //         FieldType::PrimArray(prim, len) => { println!("PRIMITIVE ARRAY OF SIZE: {}", len)},
+        // //         FieldType::Nested(type_name, nested_fields ) => {println!("NESTED TYPE: {}", type_name)},
+        // //         FieldType::NestedArray(type_name, nested_fields , len) => { println!("ARRAY OF NESTED TYPE: {}", type_name)}
+        // //     }
+        // // }
+        // topic.fields = fields;
 
 
         //all_msg_fields.push(fields);

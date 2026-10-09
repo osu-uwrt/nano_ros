@@ -70,6 +70,8 @@ static nros_tx_ctx_t tx = { .state = TX_IDLE };
 static nros_registration_ctx_t registration = { 0 };
 static nros_stream_parser_t parser = { 0 };
 
+static const uint8_t CDR_ENCAP_HEADER[4] = { 0x00, 0x01, 0x00, 0x00 };
+
 // static void load_next_registration_frame() {
 //     if (tx.sending_reg_done_frame) {
 //         printf("done reg\n");
@@ -232,7 +234,7 @@ static bool nros_dispatch(const nros_frame_header_t *header, const uint8_t paylo
         break;
     }
     case NROS_PACKET_ACK: {
-        printf("host ack: topic id[%d]", header->topic_id);
+        printf("host ack: topic id[%d]\n", header->topic_id);
         if (!rx.awaiting_ack) {
             break;
         }
@@ -295,6 +297,15 @@ void tx_poll() {
     }
 
     if (tx.state == TX_SENDING_FRAME) {
+        // debug
+        // uint8_t *cursor = tx.buffer + tx.bytes_sent;
+        // size_t len = tx.frame_len - tx.bytes_sent;
+        // size_t num_read = 0;
+        // while (num_read < len) {
+        //     printf("%02hhX", cursor++);
+        //     num_read++;
+        // }
+        // printf("\n");
         size_t n = transport->write(tx.buffer + tx.bytes_sent, tx.frame_len - tx.bytes_sent, transport->user_data);
         tx.bytes_sent += n;
         if (tx.bytes_sent < tx.frame_len) {
@@ -383,7 +394,12 @@ bool nros_publish(uint8_t topic_id, nros_serialize_fn fn, const void* msg) {
     }
 
     ucdrBuffer buf;
-    ucdr_init_buffer(&buf, tx.payload_buffer, NROS_BUFFER_SIZE); // tx.buffer + 4 then state endianness in those prev 4 bytes
+    ucdr_init_buffer(&buf, tx.payload_buffer, NROS_BUFFER_SIZE);
+
+    if (!ucdr_serialize_array_uint8_t(&buf, CDR_ENCAP_HEADER, sizeof(CDR_ENCAP_HEADER))) { // write in encapsulation header
+        return false;
+    }
+
     if (!fn(&buf, msg)) {
         return false;
     }
@@ -398,6 +414,7 @@ bool nros_publish(uint8_t topic_id, nros_serialize_fn fn, const void* msg) {
     tx.frame_len = nros_stream_encode_frame(&tx.header, tx.payload_buffer, payload_len, tx.buffer, NROS_BUFFER_SIZE);
     if (tx.frame_len == 0) {
         printf("publish frame too big for topic id[%d], not sending", topic_id);
+        return false;
     }
     
     tx.bytes_sent = 0;

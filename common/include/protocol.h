@@ -18,6 +18,7 @@ typedef enum {
 typedef struct {
     uint8_t magic[2];
     uint8_t type; // assigned to with the packet type enum
+   // uint8_t client_id;
     uint8_t topic_id;
     uint16_t length;
 } __attribute__((packed)) nros_frame_header_t;

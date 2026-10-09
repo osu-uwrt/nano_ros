@@ -11,7 +11,7 @@ pub enum Transport {
 
 #[derive(Debug, Deserialize, PartialEq, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
-pub enum Direction {
+pub enum TopicType {
     Publisher,
     Subscriber,
 }
@@ -25,9 +25,8 @@ pub struct BoardInfo {
 #[derive(Debug, Deserialize)]
 pub struct Topic {
     pub name: String,
-    pub direction: Direction,
-    pub ros_type: String,
-    pub qos: String,
+    pub topic_type: TopicType,
+    pub msg_type: String,
     #[serde(skip)]
     pub fields: Vec<MsgField>,  // populated after parsing .msg file
 }
