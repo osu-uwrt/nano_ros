@@ -43,6 +43,7 @@ void ClientHandlerNode::client_publish(WireFrame &frame) {
         rclcpp::SerializedMessage msg(frame.payload.size());
         auto &byte_buf = msg.get_rcl_serialized_message();
         memcpy(byte_buf.buffer, frame.payload.data(), frame.payload.size());
+        byte_buf.buffer_length = frame.payload.size(); // why doesnt the construction of an rclcpp::SerializedMessage set this field?
         (*pub)->publish(msg);
     }
 }

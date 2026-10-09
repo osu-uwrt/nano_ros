@@ -6,8 +6,7 @@
 
 int main(int argc, char *argv[]) {
     rclcpp::init(argc, argv);
-
-    const char *port = "/dev/ttyACM1";
+    const char *port = argv[1];
     const char *baud = "115200";
     nros::Agent handler(std::make_unique<nros::SerialTransport>(port, baud));
     handler.run();

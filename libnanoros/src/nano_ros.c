@@ -298,15 +298,13 @@ void tx_poll() {
 
     if (tx.state == TX_SENDING_FRAME) {
         // debug
-        // uint8_t *cursor = tx.buffer + tx.bytes_sent;
-        // size_t len = tx.frame_len - tx.bytes_sent;
-        // size_t num_read = 0;
-        // while (num_read < len) {
-        //     printf("%02hhX", cursor++);
-        //     num_read++;
+        //uint8_t *start = tx.buffer + tx.bytes_sent;
+        size_t n = transport->write(tx.buffer + tx.bytes_sent, tx.frame_len - tx.bytes_sent, transport->user_data);
+        // for (int i = 0; i < n; i++) {
+        //     printf("%02hhX", start[i]);
         // }
         // printf("\n");
-        size_t n = transport->write(tx.buffer + tx.bytes_sent, tx.frame_len - tx.bytes_sent, transport->user_data);
+        // printf("wrote %d bytes\n", n);
         tx.bytes_sent += n;
         if (tx.bytes_sent < tx.frame_len) {
             return;

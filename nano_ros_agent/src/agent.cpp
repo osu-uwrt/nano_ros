@@ -192,7 +192,6 @@ void Agent::frame_dispatch(WireFrame &frame) {
     switch (frame.header.type) {
 
     case NROS_PACKET_DATA: {
-        printf("publishing\n");
         client_->client_publish(frame);
         break;
     }
