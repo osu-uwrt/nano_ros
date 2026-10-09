@@ -44,8 +44,8 @@ public:
             spin_thread_.join();
         }
     }
-    void client_publish(WireFrame &frame);
-    void client_subscription_callback(uint8_t client_id, uint8_t topic_id, std::shared_ptr<rclcpp::SerializedMessage> msg);
+    void client_publish(const WireFrame &frame) const;
+    void client_subscription_callback(uint8_t client_id, uint8_t topic_id, const std::shared_ptr<rclcpp::SerializedMessage>& msg) const;
     void on_client_connect(const std::vector<Topic> &new_topics);
     void on_client_disconnect();
 private:
