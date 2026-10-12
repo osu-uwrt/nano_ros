@@ -4,10 +4,19 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/generic_publisher.hpp>
 #include <rclcpp/generic_subscription.hpp>
+#include <memory>
+#include <thread>
+#include <functional>
+#include <vector>
 #include "transport.hpp"
 #include "thread_safe_queue.hpp"
 
 namespace nros {
+
+constexpr uint8_t PUBLISHER_TOPIC_ID_START = UINT8_MAX / 2;
+constexpr uint8_t PUBLISHER_TOPIC_ID_END = UINT8_MAX;
+constexpr uint8_t SUBSCRIBER_TOPIC_ID_START = 0;
+constexpr uint8_t SUBSCRIBER_TOPIC_ID_END = (UINT8_MAX / 2) - 1;
 
 struct Topic {
     bool active = false;

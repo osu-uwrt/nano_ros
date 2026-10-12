@@ -9,7 +9,7 @@ using namespace nros;
 void ClientHandlerNode::on_client_connect(const std::vector<Topic> &topics) {
     for (Topic t : topics) {
         topics_[t.id] = t;
-        if (t.id > 127) {
+        if (t.id >= PUBLISHER_TOPIC_ID_START) {
             topics_[t.id].handle = create_generic_publisher(t.topic_name, t.msg_type, rclcpp::SystemDefaultsQoS());
         } else {
             topics_[t.id].handle = create_generic_subscription(t.topic_name, 
@@ -26,13 +26,20 @@ void ClientHandlerNode::on_client_connect(const std::vector<Topic> &topics) {
 }
 
 void ClientHandlerNode::client_subscription_callback(uint8_t client_id, uint8_t topic_id, std::shared_ptr<rclcpp::SerializedMessage> msg) {
+    const auto &byte_buf = msg->get_rcl_serialized_message();
+
+    constexpr size_t ENCAP_HEADER_SIZE = 4;
+    if (byte_buf.buffer_length < ENCAP_HEADER_SIZE) {
+        return;  // malformed, nothing to forward
+    }
+
+    std::vector<uint8_t> bytes(byte_buf.buffer + ENCAP_HEADER_SIZE, byte_buf.buffer + byte_buf.buffer_length);
+
     OutboundMsg out;
     out.client_id = client_id;
     out.frame.header.topic_id = topic_id;
     out.frame.header.type = NROS_PACKET_DATA;
-    out.frame.header.length = msg->size();
-    const auto &byte_buf = msg->get_rcl_serialized_message();
-    std::vector<uint8_t> bytes(byte_buf.buffer, byte_buf.buffer + byte_buf.buffer_length);
+    out.frame.header.length = bytes.size();   // length of the stripped payload
     out.frame.payload = std::move(bytes);
     cb_data_queue_.push(out);
 }
@@ -43,7 +50,7 @@ void ClientHandlerNode::client_publish(WireFrame &frame) {
         rclcpp::SerializedMessage msg(frame.payload.size());
         auto &byte_buf = msg.get_rcl_serialized_message();
         memcpy(byte_buf.buffer, frame.payload.data(), frame.payload.size());
-        byte_buf.buffer_length = frame.payload.size(); // why doesnt the construction of an rclcpp::SerializedMessage set this field?
+        byte_buf.buffer_length = frame.payload.size();
         (*pub)->publish(msg);
     }
 }

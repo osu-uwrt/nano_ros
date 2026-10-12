@@ -16,3 +16,8 @@ msg_type = "std_msgs/msg/UInt8"
 name = "firmware_status"
 topic_type = "publisher"
 msg_type = "riptide_msgs2/msg/FirmwareStatus"
+
+[[topics]]
+name = "nros_fw_status_test_topic"
+topic_type = "subscriber"
+msg_type = "riptide_msgs2/msg/FirmwareStatus"

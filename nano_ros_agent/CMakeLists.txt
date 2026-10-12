@@ -31,7 +31,7 @@ add_executable(nano_ros_agent
     src/server.cpp
     src/agent.cpp
     src/client_handler.cpp
-    src/transport/can.cpp
+    src/transport/canmore.cpp
     src/transport/serial.cpp
 )
 

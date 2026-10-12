@@ -228,6 +228,11 @@ static bool nros_dispatch(const nros_frame_header_t *header, const uint8_t paylo
         break;
     }
     case NROS_PACKET_DATA: {
+        printf("got data for: %d\n", header->topic_id);
+        for (int i = 0; i < header->length; i++) {
+            printf("%hhX", payload[i]);
+        }
+        printf("\n");
         ucdrBuffer buf;
         ucdr_init_buffer(&buf, (uint8_t *)payload, header->length);
         topic_map[header->topic_id]->cb(&buf);
