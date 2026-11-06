@@ -2,8 +2,13 @@
 #include <poll.h>
 #include <stdio.h>
 #include <string.h>
+#include <chrono>
+#include <thread>
 
 using namespace nros;
+
+// how often to try reopening the transport after it drops (e.g. the board was unplugged or reset)
+static constexpr std::chrono::milliseconds RECONNECT_INTERVAL { 1000 };
 
 Agent::Agent(std::unique_ptr<Transport> transport) : transport_(std::move(transport)) {}
 
@@ -105,15 +110,53 @@ void Agent::ack_client() {
 //     }
 // }
 
+bool Agent::connect_transport() {
+    bool warned = false;
+    while (running_ && rclcpp::ok()) {
+        if (transport_->init()) {
+            printf("transport connected\n");
+            return true;
+        }
+        if (!warned) {
+            fprintf(stderr, "couldn't open the transport, retrying every %lld ms\n",
+                    static_cast<long long>(RECONNECT_INTERVAL.count()));
+            warned = true;
+        }
+        std::this_thread::sleep_for(RECONNECT_INTERVAL);
+    }
+    return false;
+}
+
+void Agent::drop_client() {
+    // destroying the node joins its executor thread, so no callback can queue data after this
+    client_.reset();
+    new_topics_.clear();
+    to_client_msg_queue_.clear();
+    ack_.need_ack = false;
+}
+
 void Agent::run() {
-    transport_->init();
     running_ = true;
     bool need_registration = true;
     bool ack_topic_register = false;
 
+    if (!connect_transport()) {
+        return;
+    }
+
     WireFrame frame;
-    while (running_) {
+    while (running_ && rclcpp::ok()) {
         //Readiness r = transport_->wait_ready(0);
+
+        if (!transport_->is_connected()) {
+            fprintf(stderr, "transport disconnected, waiting for the client to come back\n");
+            transport_->fini();
+            drop_client();
+            if (!connect_transport()) {
+                break;
+            }
+            need_registration = true; // DISCOVER makes the client register its topics again
+        }
 
         if (transport_->recv_frame(frame, 0)) {
             frame_dispatch(frame);
@@ -121,10 +164,13 @@ void Agent::run() {
 
         if (need_registration) {
             need_registration = false;
-            frame.header.type = NROS_PACKET_DISCOVER;
-            frame.header.topic_id = 0;
-            frame.header.length = 0;
-            transport_->send_frame(frame, 0);
+            // its own frame: `frame` still holds the last received payload, which would get sent after
+            // the header and break the CRC (only shows up on a reconnect, since it starts out empty)
+            WireFrame discover;
+            discover.header.type = NROS_PACKET_DISCOVER;
+            discover.header.topic_id = 0;
+            discover.header.length = 0;
+            transport_->send_frame(discover, 0);
         }
         if (to_client_msg_queue_.size() > 0) {
             OutboundMsg msg = to_client_msg_queue_.wait_and_pop();

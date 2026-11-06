@@ -31,6 +31,10 @@ private:
     nros_ack_status_t decode_registration_frame(WireFrame &frame, Topic &t);
     void spawn_client(bool expect_multiple_clients);
     void ack_client();
+    // keeps calling transport_->init() until it works. false if the agent was stopped first
+    bool connect_transport();
+    // forgets everything from the old connection so the client can register from scratch
+    void drop_client();
 
     std::unique_ptr<Transport> transport_;
     ThreadSafeQueue<OutboundMsg> to_client_msg_queue_;
