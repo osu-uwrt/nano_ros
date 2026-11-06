@@ -47,6 +47,12 @@ the agent rejects a registration with an unknown QoS value by ACKing it with a n
 
 nano_ros_codegen reads this file and supplies the user with the code they'll need to publish/subscribe and gives the firmware library code an array of structures to use.
 
+#### checking it while you type
+`nano_ros_codegen/ros.schema.json` describes ros.toml, so editors that use taplo (VS Code's Even Better TOML, Helix, Zed, ...) underline typos, unknown fields and bad values like `qos = "sensordata"` as you type, and complete field names. in this repo `.taplo.toml` applies it to every ros.toml. elsewhere (e.g. in titan_firmware), put this on the first line of your ros.toml:
+```toml
+#:schema https://raw.githubusercontent.com/osu-uwrt/nano_ros/master/nano_ros_codegen/ros.schema.json
+```
+
 ### libnanoros
 
 link libnanoros into your firmware and point `nano_ros_generate()` at your ros.toml (see [building libnanoros](#libnanoros-1)). the codegen runs as part of your build, so there's no separate step
