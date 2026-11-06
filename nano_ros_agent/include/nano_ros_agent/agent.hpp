@@ -13,6 +13,7 @@ namespace nros {
 struct AckStatus {
     bool need_ack;
     uint8_t topic_to_ack_id;
+    nros_ack_status_t status = NROS_ACK_OK;
 };
 
 class Agent {
@@ -27,7 +28,7 @@ public:
 private:
     // each node gets the same callback for all subscriptions
     void frame_dispatch(WireFrame &frame);
-    Topic decode_registration_frame(WireFrame &frame);
+    nros_ack_status_t decode_registration_frame(WireFrame &frame, Topic &t);
     void spawn_client(bool expect_multiple_clients);
     void ack_client();
 

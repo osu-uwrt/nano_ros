@@ -257,7 +257,7 @@ pub fn generate_topic_array(topics: &Vec<Topic>, out: &mut impl Write) -> Result
                 writeln!(out, "        .cb = nros_{}_subscriber_handler,", topic.name)?;
             },
         }
-        //writeln!(out, "        .qos = ")?;
+        writeln!(out, "        .qos = {},", topic.qos.c_name())?;
         writeln!(out, "    }},")?;
     }
     writeln!(out, "}};\n")?;

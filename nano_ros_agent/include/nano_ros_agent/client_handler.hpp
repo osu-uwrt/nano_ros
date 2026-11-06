@@ -9,6 +9,7 @@
 #include <functional>
 #include <vector>
 #include "transport.hpp"
+#include "protocol.h"
 #include "thread_safe_queue.hpp"
 
 namespace nros {
@@ -21,6 +22,7 @@ constexpr uint8_t SUBSCRIBER_TOPIC_ID_END = (UINT8_MAX / 2) - 1;
 struct Topic {
     bool active = false;
     uint8_t id;
+    uint8_t qos = NROS_QOS_DEFAULT; // nros_qos_t
     std::string topic_name;
     std::string msg_type;
 

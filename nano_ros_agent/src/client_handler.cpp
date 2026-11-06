@@ -5,16 +5,36 @@ extern "C" {
 
 using namespace nros;
 
-// make qos configurable firmware side and accept it here
+// maps the wire QoS byte to an rclcpp profile. the agent rejects values >= NROS_QOS_COUNT at
+// registration, so anything unknown here falls back to the default profile
+static rclcpp::QoS qos_from_wire(uint8_t qos) {
+    switch (static_cast<nros_qos_t>(qos)) {
+    case NROS_QOS_SENSOR_DATA:
+        return rclcpp::SensorDataQoS();
+    case NROS_QOS_RELIABLE:
+        return rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+    case NROS_QOS_BEST_EFFORT:
+        return rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
+    case NROS_QOS_TRANSIENT_LOCAL:
+        return rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
+    case NROS_QOS_SYSTEM_DEFAULT:
+        return rclcpp::SystemDefaultsQoS();
+    case NROS_QOS_DEFAULT:
+    default:
+        return rclcpp::QoS(rclcpp::KeepLast(10));
+    }
+}
+
 void ClientHandlerNode::on_client_connect(const std::vector<Topic> &topics) {
     for (Topic t : topics) {
         topics_[t.id] = t;
+        rclcpp::QoS qos = qos_from_wire(t.qos);
         if (t.id >= PUBLISHER_TOPIC_ID_START) {
-            topics_[t.id].handle = create_generic_publisher(t.topic_name, t.msg_type, rclcpp::SystemDefaultsQoS());
+            topics_[t.id].handle = create_generic_publisher(t.topic_name, t.msg_type, qos);
         } else {
             topics_[t.id].handle = create_generic_subscription(t.topic_name, 
                 t.msg_type,
-                rclcpp::SystemDefaultsQoS(), // make configurable client side
+                qos,
                 [this, client_id = client_id_, topic_id = topics_[t.id].id]
                 (std::shared_ptr<rclcpp::SerializedMessage> msg) {
                     this->client_subscription_callback(client_id, topic_id, msg);

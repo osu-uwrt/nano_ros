@@ -32,6 +32,19 @@ ros_type = "riptide_msgs/FirmwareStatus"
 qos = "default"
 ```
 
+`qos` is optional and defaults to `"default"`. It picks the QoS profile the agent uses for the topic's ROS publisher/subscription:
+
+| `qos` | profile |
+|---|---|
+| `default` | rclcpp default: reliable, volatile, keep last 10 |
+| `sensor_data` | `rclcpp::SensorDataQoS`: best effort, volatile, keep last 5 |
+| `reliable` | reliable, volatile, keep last 10 |
+| `best_effort` | best effort, volatile, keep last 10 |
+| `transient_local` | reliable, transient local (latched), keep last 1 |
+| `system_default` | `rclcpp::SystemDefaultsQoS` |
+
+the agent rejects a registration with an unknown QoS value by ACKing it with a nonzero status (see `nros_ack_status_t` in `common/include/protocol.h`).
+
 nano_ros_codegen reads this file and supplies the user with the code they'll need to publish/subscribe and gives the firmware library code an array of structures to use.
 
 this should be ran first. 
