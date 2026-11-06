@@ -143,6 +143,12 @@ void Agent::frame_dispatch(WireFrame &frame) {
     switch (frame.header.type) {
 
     case NROS_PACKET_DATA: {
+        // the client node only exists after REGISTER_DONE
+        if (!client_) {
+            fprintf(stderr, "dropping data for topic id %hhu: client has not finished registering\n",
+                    frame.header.topic_id);
+            break;
+        }
         client_->client_publish(frame);
         break;
     }
