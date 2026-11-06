@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 
@@ -224,6 +225,8 @@ pub struct MsgResolver {
     ros_pkgs: PackageIndex,
     /// Built from the user types directory
     user_pkgs: PackageIndex,
+    /// Every .msg file parsed so far, for the build system's depfile
+    read_files: RefCell<BTreeSet<PathBuf>>,
 }
 
 /// Result of resolving "pkg/Name" to an actual file.
@@ -240,7 +243,13 @@ impl MsgResolver {
                 .with_context(|| format!("Indexing ROS packages in {}", ros_share.display()))?,
             user_pkgs: build_package_index(user_types_path)
                 .with_context(|| format!("Indexing user packages in {}", user_types_path.display()))?,
+            read_files: RefCell::new(BTreeSet::new()),
         })
+    }
+
+    /// The .msg files parsed so far, sorted.
+    pub fn read_files(&self) -> Vec<PathBuf> {
+        self.read_files.borrow().iter().cloned().collect()
     }
 
     /// Resolve "pkg/Name" or "pkg/msg/Name" to a .msg file. ROS install wins over user types,
@@ -330,6 +339,7 @@ fn search_for_msg(dir: &Path, name: &str, depth: usize) -> Option<PathBuf> {
 pub fn parse_msg_file(resolver: &MsgResolver, msg_path: &Path, owning_pkg: &str) -> Result<Vec<MsgField>> {
     let content = std::fs::read_to_string(msg_path)
         .with_context(|| format!("Failed to read {}", msg_path.display()))?;
+    resolver.read_files.borrow_mut().insert(msg_path.to_path_buf());
     parse_msg_str(resolver, &content, owning_pkg, msg_path)
 }
 
