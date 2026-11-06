@@ -13,6 +13,8 @@ typedef enum {
     NROS_PACKET_ACK      = 0x03, // with status
     NROS_PACKET_REGISTER_DONE = 0x04, // marks registration as done
     NROS_PACKET_DISCOVER = 0x05, // from agent to tell mcu to give up its topics
+    NROS_PACKET_HELLO    = 0x07, // from mcu when it isn't registered, asks the agent for a DISCOVER
+    NROS_PACKET_PING     = 0x08, // from agent to a registered mcu, so it can tell the agent is still there
 } nros_packet_type_t;
 
 typedef struct {

@@ -105,6 +105,27 @@ void Agent::ack_client() {
 //     }
 // }
 
+// Asks the board to register from scratch, forgetting anything it half sent before
+void Agent::send_discover() {
+    new_topics_.clear();
+    WireFrame frame;
+    frame.header.type = NROS_PACKET_DISCOVER;
+    frame.header.topic_id = 0;
+    frame.header.length = 0;
+    transport_->send_frame(frame, 0);
+}
+
+// Lets a registered board know the agent is still here; it reconnects if these stop
+void Agent::send_ping() {
+    WireFrame frame;
+    frame.header.type = NROS_PACKET_PING;
+    frame.header.topic_id = 0;
+    frame.header.length = 0;
+    transport_->send_frame(frame, 0);
+}
+
+static constexpr std::chrono::milliseconds PING_PERIOD{500};
+
 void Agent::run() {
     transport_->init();
     running_ = true;
@@ -121,10 +142,12 @@ void Agent::run() {
 
         if (need_registration) {
             need_registration = false;
-            frame.header.type = NROS_PACKET_DISCOVER;
-            frame.header.topic_id = 0;
-            frame.header.length = 0;
-            transport_->send_frame(frame, 0);
+            send_discover();
+        }
+        auto now = std::chrono::steady_clock::now();
+        if (client_ && now - last_ping_ >= PING_PERIOD) {
+            last_ping_ = now;
+            send_ping();
         }
         if (to_client_msg_queue_.size() > 0) {
             OutboundMsg msg = to_client_msg_queue_.wait_and_pop();
@@ -143,7 +166,9 @@ void Agent::frame_dispatch(WireFrame &frame) {
     switch (frame.header.type) {
 
     case NROS_PACKET_DATA: {
-        client_->client_publish(frame);
+        if (client_) { // not before REGISTER_DONE, or right after a HELLO reset us
+            client_->client_publish(frame);
+        }
         break;
     }
 
@@ -168,6 +193,15 @@ void Agent::frame_dispatch(WireFrame &frame) {
 
     case NROS_PACKET_REGISTER_DONE: {
         spawn_client(false); // determine if theres multiple clients for real
+        new_topics_.clear();
+        break;
+    }
+
+    case NROS_PACKET_HELLO: {
+        // the board isn't registered (it reset, or lost us): drop what we had for it and start over
+        printf("board says hello, asking it to register\n");
+        client_.reset();
+        send_discover();
         break;
     }
 

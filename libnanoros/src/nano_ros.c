@@ -64,7 +64,47 @@ typedef struct {
 
 static nros_transport_t *transport;
 static nros_topic_t const *topic_map[NROS_TOPIC_ALLOC_SIZE] = { 0 };
-static bool registration_complete = false;
+typedef enum {
+    LINK_DISCONNECTED, // not registered, announcing with HELLO
+    LINK_REGISTERING,  // sending REGISTER frames
+    LINK_CONNECTED,    // agent accepted every topic
+} nros_link_state_t;
+
+#define NROS_HELLO_PERIOD_MS 1000  // how often to announce while unregistered
+#define NROS_ACK_TIMEOUT_MS 1000   // give up on a registration when an ACK takes longer than this
+#define NROS_AGENT_TIMEOUT_MS 2000 // agent pings every 500 ms, so this is several missed pings
+
+static nros_link_state_t link_state = LINK_DISCONNECTED;
+static nros_millis_fn clock_ms;
+static nros_connection_cb connection_cb;
+static bool discover_pending;      // DISCOVER arrived while the transmitter was busy
+static bool hello_pending = true;  // announce as soon as we can after boot
+static uint32_t last_rx_ms;
+static uint32_t last_hello_ms;
+static uint32_t ack_wait_start_ms;
+
+static uint32_t now_ms() {
+    return clock_ms ? clock_ms() : 0;
+}
+
+static void set_link_state(nros_link_state_t state) {
+    if (state == link_state) {
+        return;
+    }
+    bool was_connected = link_state == LINK_CONNECTED;
+    link_state = state;
+    if (state == LINK_CONNECTED) {
+        last_rx_ms = now_ms();
+    }
+    if (state == LINK_DISCONNECTED) {
+        last_hello_ms = now_ms();
+        hello_pending = true;
+    }
+    bool connected = state == LINK_CONNECTED;
+    if (connection_cb && connected != was_connected) {
+        connection_cb(connected);
+    }
+}
 
 static nros_rx_ctx_t rx = { .state = RX_WAIT_HEADER };
 static nros_tx_ctx_t tx = { .state = TX_IDLE };
@@ -158,6 +198,7 @@ static void load_next_registration_frame() {
         tx.state = TX_SENDING_FRAME;
         tx.bytes_sent = 0;
         rx.awaiting_ack = true;
+        ack_wait_start_ms = now_ms();
     }
 }
 
@@ -168,7 +209,7 @@ static bool register_topics_start() {
 
     tx.is_registration = true;
     tx.topic_registration_idx = 0;
-    tx.sending_reg_done_frame = false;
+    tx.sending_reg_done_frame = nros_topic_count == 0;
     load_next_registration_frame();
     return true;
 }
@@ -185,8 +226,8 @@ static void tx_frame_complete() {
 
     if (tx.sending_reg_done_frame) {
         tx.state = TX_IDLE;
-        registration_complete = true;
-        //tx.is_registration = false;
+        tx.is_registration = false;
+        set_link_state(LINK_CONNECTED);
         return;
     }
 
@@ -234,9 +275,13 @@ static bool nros_dispatch(const nros_frame_header_t *header, const uint8_t paylo
             printf("%hhX", payload[i]);
         }
         printf("\n");
+        const nros_topic_t *topic = topic_map[header->topic_id];
+        if (!topic || !topic->cb) {
+            break; // not one of our subscriptions
+        }
         ucdrBuffer buf;
         ucdr_init_buffer(&buf, (uint8_t *)payload, header->length);
-        topic_map[header->topic_id]->cb(&buf);
+        topic->cb(&buf);
         break;
     }
     case NROS_PACKET_ACK: {
@@ -268,8 +313,13 @@ static bool nros_dispatch(const nros_frame_header_t *header, const uint8_t paylo
     }
     case NROS_PACKET_DISCOVER: {
         printf("starting registration\n");
-        register_topics_start();
+        // starts from link_poll once the transmitter is free, so a DISCOVER that arrives mid
+        // publish isn't lost
+        discover_pending = true;
         break;
+    }
+    case NROS_PACKET_PING: {
+        break; // receiving it is the point
     }
     }
 }
@@ -365,6 +415,7 @@ void tx_poll() {
 void on_frame_cb(const nros_frame_header_t *header, const uint8_t payload[], void *user_data) {
     // ucdrBuffer buf;
     // ucdr_init_buffer(&buf, (uint8_t *)payload, header->length);
+    last_rx_ms = now_ms();
     nros_dispatch(header, payload);
 }
 
@@ -376,9 +427,70 @@ void rx_poll() {
     }
 }
 
+static void send_hello() {
+    tx.header = (nros_frame_header_t) { .type = NROS_PACKET_HELLO, .topic_id = 0, .length = 0 };
+    tx.frame_len = nros_stream_encode_frame(&tx.header, NULL, 0, tx.buffer, NROS_BUFFER_SIZE);
+    if (tx.frame_len == 0) {
+        return;
+    }
+    tx.bytes_sent = 0;
+    tx.is_registration = false;
+    tx.state = TX_SENDING_FRAME;
+}
+
+// Moves the link along: starts registration on DISCOVER, announces while unregistered, and
+// times out a stalled registration or a missing agent (the timeouts need nros_set_clock)
+static void link_poll() {
+    uint32_t now = now_ms();
+
+    // timeouts first: a dead link can leave the transmitter stuck, so these can't wait for it
+    if (clock_ms && link_state == LINK_REGISTERING && rx.awaiting_ack
+        && now - ack_wait_start_ms >= NROS_ACK_TIMEOUT_MS) {
+        printf("registration timed out\n");
+        rx.awaiting_ack = false;
+        tx.is_registration = false;
+        set_link_state(LINK_DISCONNECTED);
+    }
+    if (clock_ms && link_state == LINK_CONNECTED && now - last_rx_ms >= NROS_AGENT_TIMEOUT_MS) {
+        printf("lost the agent\n");
+        tx.state = TX_IDLE; // drop whatever was stuck, the agent resyncs on the next frame
+        set_link_state(LINK_DISCONNECTED);
+    }
+
+    if (tx.state != TX_IDLE) {
+        return;
+    }
+    if (discover_pending) {
+        discover_pending = false;
+        set_link_state(LINK_REGISTERING);
+        register_topics_start();
+        return;
+    }
+    if (link_state == LINK_DISCONNECTED
+        && (hello_pending || (clock_ms && now - last_hello_ms >= NROS_HELLO_PERIOD_MS))) {
+        hello_pending = false;
+        last_hello_ms = now;
+        send_hello();
+    }
+}
+
 void nros_spin() {
     rx_poll();
     tx_poll();
+    link_poll();
+}
+
+void nros_set_clock(nros_millis_fn millis) {
+    clock_ms = millis;
+    last_rx_ms = last_hello_ms = ack_wait_start_ms = millis();
+}
+
+bool nros_is_connected(void) {
+    return link_state == LINK_CONNECTED;
+}
+
+void nros_set_connection_cb(nros_connection_cb cb) {
+    connection_cb = cb;
 }
 
 bool nros_init(nros_transport_t *t, bool use_nros_framing) {
@@ -401,7 +513,7 @@ bool nros_init(nros_transport_t *t, bool use_nros_framing) {
 }
 
 bool nros_publish(uint8_t topic_id, nros_serialize_fn fn, const void* msg) {
-    if (tx.state != TX_IDLE || !registration_complete) {
+    if (tx.state != TX_IDLE || link_state != LINK_CONNECTED) {
         return false;
     }
 

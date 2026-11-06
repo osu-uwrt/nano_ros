@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include <memory>
 #include <string>
 #include <variant>
@@ -31,6 +32,8 @@ private:
     nros_ack_status_t decode_registration_frame(WireFrame &frame, Topic &t);
     void spawn_client(bool expect_multiple_clients);
     void ack_client();
+    void send_discover();
+    void send_ping();
 
     std::unique_ptr<Transport> transport_;
     ThreadSafeQueue<OutboundMsg> to_client_msg_queue_;
@@ -39,6 +42,7 @@ private:
     std::vector<Topic> new_topics_;
     size_t client_id_idx_ = 0; // temp for dealing with client ids until its actually implemented
     AckStatus ack_;
+    std::chrono::steady_clock::time_point last_ping_;
     //Topic topics[UINT8_MAX] = { 0 }; // indexed by topic id (uint8 can change) 
     bool running_;
 };

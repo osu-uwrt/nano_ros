@@ -53,6 +53,19 @@ link libnanoros into your firmware and point `nano_ros_generate()` at your ros.t
 
 then #include both "nano_ros.h" and "nano_ros_codegen.h". for each topic you get a C struct for its message type, plus `nros_publish_<name>()` for publishers and `nros_set_<name>_subscriber_cb()` for subscribers
 
+#### connecting
+the library connects and reconnects on its own: if the board resets, the agent restarts, or the link drops, it registers again by itself. just keep calling `nros_spin()`. give it a clock so it can tell when the agent has gone away:
+
+```c
+static uint32_t millis(void) { return to_ms_since_boot(get_absolute_time()); }
+
+nros_set_clock(millis);
+nros_set_connection_cb(on_connection); // optional, called with true / false
+nros_init(&transport, true);
+```
+
+`nros_is_connected()` says where it's at, and publishes return false while disconnected. without a clock it still registers whenever the agent asks, but it can't notice a lost agent
+
 ### codegen
 
 you only need to run codegen by hand to look at its output. it accepts a path to a ros.toml file, the ros installation prefix, and a directory of custom .msg packages
