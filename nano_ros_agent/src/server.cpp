@@ -18,7 +18,8 @@ void setup(std::unique_ptr<nros::Transport> &transport, int argc, char *argv[]) 
 int main(int argc, char *argv[]) {
     std::unique_ptr<nros::Transport> transport;
     rclcpp::init(argc, argv);
-    const char *port = argv[1];
+    // /dev/nros-ros comes from udev/70-nano-ros.rules
+    const char *port = argc > 1 ? argv[1] : "/dev/nros-ros";
     const char *baud = "115200";
     nros::Agent handler(std::make_unique<nros::SerialTransport>(port, baud));
     handler.run();

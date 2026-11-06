@@ -7,6 +7,16 @@
   outputs =
     { uwrt, ... }:
     {
+      # Installs udev/70-nano-ros.rules (/dev/nros-ros, /dev/nros-log). A package rather than
+      # services.udev.extraRules, which lands in 99-local.rules: too late for TAG+="uaccess".
+      nixosModules.default =
+        { pkgs, ... }:
+        {
+          services.udev.packages = [
+            (pkgs.writeTextDir "lib/udev/rules.d/70-nano-ros.rules" (builtins.readFile ./udev/70-nano-ros.rules))
+          ];
+        };
+
       devShells = uwrt.lib.forAllSystems (
         pkgs:
         let
