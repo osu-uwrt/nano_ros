@@ -16,10 +16,12 @@ mod codegen;
 use msg_file_parser::*;
 use codegen::*; 
 
-fn parse_args(args: &[String]) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
+fn parse_args(args: &[String]) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf, Option<PathBuf>)> {
     let mut toml_path: Option<PathBuf> = None;
     let mut ros_prefix: Option<PathBuf> = None;
     let mut user_types_path: Option<PathBuf> = None;
+    let mut out_dir: Option<PathBuf> = None;
+    let mut depfile: Option<PathBuf> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -38,6 +40,20 @@ fn parse_args(args: &[String]) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
                     .ok_or_else(|| anyhow!("--user-msgs requires a value"))?;
                 user_types_path = Some(PathBuf::from(val));
             }
+            "--out-dir" => {
+                i += 1;
+                let val = args
+                    .get(i)
+                    .ok_or_else(|| anyhow!("--out-dir requires a value"))?;
+                out_dir = Some(PathBuf::from(val));
+            }
+            "--depfile" => {
+                i += 1;
+                let val = args
+                    .get(i)
+                    .ok_or_else(|| anyhow!("--depfile requires a value"))?;
+                depfile = Some(PathBuf::from(val));
+            }
             arg if !arg.starts_with("--") => {
                 toml_path = Some(PathBuf::from(arg));
             }
@@ -50,10 +66,12 @@ fn parse_args(args: &[String]) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
 
     let toml_path = toml_path.ok_or_else(|| anyhow!("must provide path to ros.toml"))?;
 
-    let out_dir = toml_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join("generated");
+    let out_dir = out_dir.unwrap_or_else(|| {
+        toml_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("generated")
+    });
 
     let ros_prefix = match ros_prefix {
         Some(p) => p,
@@ -70,7 +88,28 @@ fn parse_args(args: &[String]) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
 
     let user_types_path = user_types_path.unwrap_or_else(|| PathBuf::from(""));
 
-    Ok((toml_path, ros_prefix, user_types_path, out_dir))
+    Ok((toml_path, ros_prefix, user_types_path, out_dir, depfile))
+}
+
+/// Escapes a path for a Makefile-style depfile.
+fn depfile_escape(path: &Path) -> String {
+    path.display()
+        .to_string()
+        .replace('$', "$$")
+        .replace('#', "\\#")
+        .replace(' ', "\\ ")
+}
+
+/// Writes a Makefile-style depfile so the build system reruns codegen when ros.toml
+/// or any .msg file it read changes.
+fn write_depfile(depfile: &Path, target: &Path, deps: &[PathBuf]) -> Result<()> {
+    let mut out = format!("{}:", depfile_escape(&std::path::absolute(target)?));
+    for dep in deps {
+        out.push_str(" \\\n  ");
+        out.push_str(&depfile_escape(&std::path::absolute(dep)?));
+    }
+    out.push('\n');
+    std::fs::write(depfile, out).with_context(|| format!("Writing depfile {}", depfile.display()))
 }
 
 /// Requires exactly "pkg/msg/Name".
@@ -91,8 +130,8 @@ fn toml_error(err: &toml::de::Error, source: &Source) -> Diagnostic {
     if let Some(span) = err.span() {
         d = d.primary(&source.span(span), "");
     }
-    // serde's message is "unknown field `x`, expected one of `a`, `b`"
-    if let Some(rest) = message.strip_prefix("unknown field `") {
+    // serde's message is "unknown field `x`, expected one of `a`, `b`", or the same with "variant"
+    if let Some(rest) = message.strip_prefix("unknown field `").or_else(|| message.strip_prefix("unknown variant `")) {
         let names: Vec<&str> = rest.split('`').step_by(2).collect();
         if let Some((unknown, expected)) = names.split_first() {
             let renamed = RENAMED_FIELDS.iter().find(|(old, _)| old == unknown).map(|(_, new)| *new);
@@ -159,7 +198,7 @@ fn report(errors: Vec<Diagnostic>) -> anyhow::Error {
 
 fn run() -> Result<()> {
     let args: Vec<String> = args().collect();
-    let (toml_path, ros_prefix, user_types, out_dir) = parse_args(&args)?;
+    let (toml_path, ros_prefix, user_types, out_dir, depfile) = parse_args(&args)?;
     println!("toml_path: {}, ros_pref: {}, user_types_dir: {}, out_dir: {}", toml_path.display(), ros_prefix.display(), user_types.display(), out_dir.display());
 
     let resolver = MsgResolver::new(&ros_prefix, &user_types)?;
@@ -168,6 +207,12 @@ fn run() -> Result<()> {
     println!("[nano_ros_codegen] Board: {}, Transport: {:?}", config.board.name, config.board.transport);
 
     generate_core_code(&config, &out_dir)?;
+
+    if let Some(depfile) = depfile {
+        let mut deps = vec![toml_path.clone()];
+        deps.extend(resolver.read_files());
+        write_depfile(&depfile, &out_dir.join(HEADER_FILE_NAME), &deps)?;
+    }
     Ok(())
 }
 

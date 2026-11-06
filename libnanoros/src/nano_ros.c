@@ -2,6 +2,7 @@
 #include "protocol.h"
 #include "nros_stream_parser.h"
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 #include <assert.h>
 
@@ -240,6 +241,13 @@ static bool nros_dispatch(const nros_frame_header_t *header, const uint8_t paylo
     }
     case NROS_PACKET_ACK: {
         printf("host ack: topic id[%d]\n", header->topic_id);
+        // older agents send an empty ACK, treat that as ok
+        if (header->length >= sizeof(nros_ack_payload_t)) {
+            const nros_ack_payload_t *ack = (const nros_ack_payload_t *)payload;
+            if (ack->status != NROS_ACK_OK) {
+                printf("host rejected topic id[%d]: status %d\n", ack->topic_id, ack->status);
+            }
+        }
         if (!rx.awaiting_ack) {
             break;
         }
@@ -373,14 +381,15 @@ void nros_spin() {
     tx_poll();
 }
 
-bool nros_init(nros_transport_t *t, bool packet_oriented) {
+bool nros_init(nros_transport_t *t, bool use_nros_framing) {
     // do error checking
     transport = t;
 
     nros_stream_parser_init(&parser);
 
+    bool init_ok = transport->init(t->user_data);
     bool open = transport->open();
-    if (!open) {
+    if (!open || !init_ok) {
         return false;
     }
 

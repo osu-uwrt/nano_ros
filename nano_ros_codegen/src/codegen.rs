@@ -7,7 +7,7 @@ use crate::msg_file_parser::*;
 use std::collections::HashSet;
 use anyhow::{Result, anyhow};
 
-const HEADER_FILE_NAME: &str = "nano_ros_codegen.h";
+pub const HEADER_FILE_NAME: &str = "nano_ros_codegen.h";
 const CODE_FILE_NAME: &str = "nano_ros_serde_codegen.c";
 const IMPLEMENTATION_FILE_NAME: &str = "nano_ros_impl_codegen.c";
 const HEADER_INCLUDE_LINES: &[&str] = &[
@@ -285,7 +285,7 @@ pub fn generate_topic_array(topics: &Vec<Topic>, out: &mut impl Write) -> Result
                 writeln!(out, "        .cb = nros_{}_subscriber_handler,", topic.name.get_ref())?;
             },
         }
-        //writeln!(out, "        .qos = ")?;
+        writeln!(out, "        .qos = {},", topic.qos.c_name())?;
         writeln!(out, "    }},")?;
     }
     writeln!(out, "}};\n")?;

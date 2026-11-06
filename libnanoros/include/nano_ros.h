@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "protocol.h"
 
 typedef struct {
     bool (*init)(void *ctx);
@@ -16,7 +17,7 @@ typedef struct {
 } nros_transport_t;
 
 typedef struct {
-    uint8_t qos;
+    uint8_t qos; // nros_qos_t, see protocol.h
     uint8_t topic_id;
     const char *topic_name;
     const char *topic_type;
@@ -25,17 +26,10 @@ typedef struct {
 
 typedef bool (*nros_serialize_fn)(ucdrBuffer* buf, const void* msg);
 
-// QoS byte
-// bit 0:    reliable (0 = fire-and-forget, 1 = ACK+retry to broker)
-// bit 1:    request replay-on-subscribe (broker should cache for late joiners)
-// bits 2-4: retry depth (0-7, only relevant if bit0=1)
-// bits 5-7: reserved
-typedef uint8_t nros_qos_flags_t;
-
 extern const nros_topic_t nros_topics[];
 extern const uint8_t nros_topic_count;
 
-bool nros_init(nros_transport_t *t, bool packet_oriented);
+bool nros_init(nros_transport_t *t, bool use_nros_framing);
 void nros_spin();
 
 bool nros_publish(uint8_t topic_id, nros_serialize_fn fn, const void* msg);
