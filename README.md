@@ -55,7 +55,35 @@ note: you should #include both "nano_ros.h" and "nano_ros_codegen.h"
 
 ### nano_ros_agent
 
-spawn the agent on a port and go brr
+spawn the agent on a port and go brr. with no port it uses `/dev/nros-ros` (see below)
+
+### USB device names
+
+a Titan board over USB shows up as two serial ports, and which one is ttyACM0 vs ttyACM1 changes. `udev/70-nano-ros.rules` gives them names that don't:
+
+| link | port |
+|---|---|
+| `/dev/nros-ros` | the nano_ros stream the agent talks to |
+| `/dev/nros-log` | the board's printf output |
+| `/dev/nros/<serial>/ros`, `/dev/nros/<serial>/log` | the same, per board, when several are plugged in |
+
+the plain names point at the most recently plugged board. the links also follow a board that gets replugged while the agent still has the old port open. the rules let your user open the ports without being in `dialout`, and stop ModemManager from poking at them
+
+on NixOS, import the flake's module in your system config:
+```nix
+inputs.nano_ros.url = "github:osu-uwrt/nano_ros";
+# in your nixosSystem modules:
+nano_ros.nixosModules.default
+```
+
+anywhere else:
+```bash
+sudo cp udev/70-nano-ros.rules /etc/udev/rules.d/
+sudo udevadm control --reload
+sudo udevadm trigger
+```
+
+then replug the board. `ls -l /dev/nros*` should show the links. to watch the board's logs: `picocom /dev/nros-log` (or `screen`, `tio`, ...)
 
 ## building
 
