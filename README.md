@@ -70,9 +70,26 @@ spawn the agent on a port and go brr
 
 ```bash
 $ nano_ros_agent serial /dev/ttyACM0 [baud]      # baud defaults to 115200
+$ nano_ros_agent can can0                         # socketcan
+$ nano_ros_agent can                              # first gs_usb adapter
+$ nano_ros_agent can --serial 0042 --dbitrate 0   # pick a gs_usb adapter, classic CAN
 ```
 
-run it with no arguments for the usage. ROS arguments go after `--ros-args` as usual. ctrl-c stops it
+run it with no arguments for all the options. ROS arguments go after `--ros-args` as usual. ctrl-c stops it
+
+#### CAN
+
+over CAN the agent talks CANmore, same as the rest of titan firmware. `CanmoreTransport` has two backends:
+
+- **socketcan** (linux): give it an interface like `can0`. bitrates and FD come from `ip link`, like with titan's canmore tools, and it's the same `Canmore::MsgAgent` code underneath
+- **gs_usb** (macOS, WSL, or linux without the kernel driver): candleLight / CANable style adapters through libusb. it sets up the bus itself, 1 Mbit/s nominal and 5 Mbit/s CAN FD data by default to match the internal bus. set the data bitrate to 0 for classic CAN, but only on a classic bus
+
+a named interface means socketcan, otherwise it opens the first gs_usb adapter the kernel isn't already using. `--gs-usb` forces gs_usb on linux and takes the adapter from the kernel driver
+
+on WSL, pass the adapter through with [usbipd](https://github.com/dorssel/usbipd-win) (`usbipd bind --busid <id>` then `usbipd attach --wsl --busid <id>` from windows). on linux and WSL you need permission to open the adapter, e.g. a udev rule like
+```
+SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="606f", TAG+="uaccess"
+```
 
 ## building
 
@@ -124,6 +141,8 @@ compile
 ```bash
 colcon build
 ```
+
+gs_usb support needs libusb-1.0 (it's in the nix dev shell). on linux the agent builds without it if it's missing, or pass `-DNANO_ROS_GS_USB=OFF`
 
 for now, you're on your own soldier
 
