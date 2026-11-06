@@ -38,6 +38,16 @@ pub fn generate_serialize_function(out: &mut impl Write, field: &MsgField) -> Re
         FieldType::PrimArray(prim, len) => {
             writeln!(out, "    ok &= ucdr_serialize_array_{}(buf, msg->{}, {});", prim.c_type(), field.name, len)?;
         },
+        FieldType::PrimSeq(prim, seq) => {
+            writeln!(out, "    ok &= msg->{name}_size <= {cap} && ucdr_serialize_sequence_{}(buf, msg->{name}, msg->{name}_size);",
+                prim.c_type(), name = field.name, cap = seq.cap)?;
+        },
+        FieldType::NestedSeq(c_type, _, seq) => {
+            writeln!(out, "    ok &= msg->{}_size <= {} && ucdr_serialize_uint32_t(buf, msg->{}_size);", field.name, seq.cap, field.name)?;
+            writeln!(out, "    for (uint32_t i = 0; ok && i < msg->{}_size; i++) {{", field.name)?;
+            writeln!(out, "        ok &= {}__serialize(buf, &msg->{}[i]);", c_type.trim_end_matches("_t"), field.name)?;
+            writeln!(out, "    }}")?;
+        },
         FieldType::Primitive(prim) => {
             match prim {
                 PrimType::String => {
@@ -65,6 +75,16 @@ pub fn generate_deserialize_function(out: &mut impl Write, field: &MsgField) -> 
         FieldType::PrimArray(prim, len) => {
             writeln!(out, "    ok &= ucdr_deserialize_array_{}(buf, msg->{}, {});", prim.c_type(), field.name, len)?;
         },
+        FieldType::PrimSeq(prim, seq) => {
+            writeln!(out, "    ok &= ucdr_deserialize_sequence_{}(buf, msg->{name}, {}, &msg->{name}_size);",
+                prim.c_type(), seq.cap, name = field.name)?;
+        },
+        FieldType::NestedSeq(c_type, _, seq) => {
+            writeln!(out, "    ok &= ucdr_deserialize_uint32_t(buf, &msg->{}_size) && msg->{}_size <= {};", field.name, field.name, seq.cap)?;
+            writeln!(out, "    for (uint32_t i = 0; ok && i < msg->{}_size; i++) {{", field.name)?;
+            writeln!(out, "        ok &= {}__deserialize(buf, &msg->{}[i]);", c_type.trim_end_matches("_t"), field.name)?;
+            writeln!(out, "    }}")?;
+        },
         FieldType::Primitive(prim) => {
             match prim {
                 PrimType::String => {
@@ -89,7 +109,7 @@ pub fn generate_serde_functions(fields: &[MsgField], type_prefix: &str, out: &mu
                 let nested_prefix = c_type.trim_end_matches("_t");
                 generate_serde_functions(nested_fields, nested_prefix, out, emitted, exposed_serde)?;
             }
-            FieldType::NestedArray(c_type, nested_fields, _) => {
+            FieldType::NestedArray(c_type, nested_fields, _) | FieldType::NestedSeq(c_type, nested_fields, _) => {
                 let nested_prefix = c_type.trim_end_matches("_t");
                 generate_serde_functions(nested_fields, nested_prefix, out, emitted, exposed_serde)?;
             }
@@ -129,7 +149,7 @@ pub fn generate_user_c_struct(fields: &[MsgField], struct_name: &str, out: &mut 
             FieldType::Nested(c_type, nested_fields) => {
                 generate_user_c_struct(nested_fields, c_type, out, emitted)?
             },
-            FieldType::NestedArray(c_type,nested_fields , _) => {
+            FieldType::NestedArray(c_type, nested_fields, _) | FieldType::NestedSeq(c_type, nested_fields, _) => {
                 generate_user_c_struct(nested_fields, c_type, out, emitted)?
             },
             _ => {}
@@ -158,6 +178,14 @@ pub fn generate_user_c_struct(fields: &[MsgField], struct_name: &str, out: &mut 
             FieldType::NestedArray(c_type, _, len) => {
                 writeln!(out, "    {} {}[{}];", c_type, field.name, len)?
             },
+            FieldType::PrimSeq(prim, seq) => {
+                writeln!(out, "    {} {}[{}];", prim.c_type(), field.name, seq.cap)?;
+                writeln!(out, "    uint32_t {}_size;", field.name)?
+            },
+            FieldType::NestedSeq(c_type, _, seq) => {
+                writeln!(out, "    {} {}[{}];", c_type, field.name, seq.cap)?;
+                writeln!(out, "    uint32_t {}_size;", field.name)?
+            },
         }
     }
     writeln!(out, "}} {};\n", struct_name)?;
@@ -169,31 +197,31 @@ pub fn generate_user_c_struct(fields: &[MsgField], struct_name: &str, out: &mut 
 /// 
 /// for example:
 pub fn generate_user_function(topic: &Topic, code_out: &mut impl Write, user_funcs: &mut Vec<String>) -> Result<()> {
-    let struct_name = ros_type_to_c_struct_name(&topic.msg_type);
+    let struct_name = ros_type_to_c_struct_name(&topic.msg_type.get_ref());
     let prefix = struct_name.trim_end_matches("_t");
     let serialize_fn = format!("(nros_serialize_fn) {}__serialize", prefix);
 
     match topic.topic_type {
         TopicType::Publisher => {
-            writeln!(code_out, "bool nros_publish_{}(const {} *msg) {{", topic.name, struct_name)?;
-            writeln!(code_out, "    return nros_publish({}_ID, {}, msg);", topic.name.to_uppercase(), serialize_fn)?;
+            writeln!(code_out, "bool nros_publish_{}(const {} *msg) {{", topic.name.get_ref(), struct_name)?;
+            writeln!(code_out, "    return nros_publish({}_ID, {}, msg);", topic.name.get_ref().to_uppercase(), serialize_fn)?;
             writeln!(code_out, "}}\n")?;   
-            user_funcs.push(format!("bool nros_publish_{}(const {} *msg);", topic.name, struct_name));
+            user_funcs.push(format!("bool nros_publish_{}(const {} *msg);", topic.name.get_ref(), struct_name));
         },
         TopicType::Subscriber => {
-            writeln!(code_out, "static void (*{}_cb)(const {} *) = NULL;\n", topic.name, struct_name)?;
+            writeln!(code_out, "static void (*{}_cb)(const {} *) = NULL;\n", topic.name.get_ref(), struct_name)?;
 
-            writeln!(code_out, "static void nros_{}_subscriber_handler(ucdrBuffer *buf) {{", topic.name)?;
+            writeln!(code_out, "static void nros_{}_subscriber_handler(ucdrBuffer *buf) {{", topic.name.get_ref())?;
             writeln!(code_out, "    {} msg;", struct_name)?;
-            writeln!(code_out, "    if ({}__deserialize(buf, &msg) && {}_cb) {{", prefix, topic.name)?;
-            writeln!(code_out, "        {}_cb(&msg);", topic.name)?;
+            writeln!(code_out, "    if ({}__deserialize(buf, &msg) && {}_cb) {{", prefix, topic.name.get_ref())?;
+            writeln!(code_out, "        {}_cb(&msg);", topic.name.get_ref())?;
             writeln!(code_out, "    }}")?;
             writeln!(code_out, "}}\n")?;
 
-            writeln!(code_out, "void nros_set_{}_subscriber_cb(void (*cb)(const {} *msg)) {{", topic.name, struct_name)?;
-            writeln!(code_out, "    {}_cb = cb;", topic.name)?;
+            writeln!(code_out, "void nros_set_{}_subscriber_cb(void (*cb)(const {} *msg)) {{", topic.name.get_ref(), struct_name)?;
+            writeln!(code_out, "    {}_cb = cb;", topic.name.get_ref())?;
             writeln!(code_out, "}}\n")?;
-            user_funcs.push(format!("void nros_set_{}_subscriber_cb(void (*cb)(const {} *msg));", topic.name, struct_name));
+            user_funcs.push(format!("void nros_set_{}_subscriber_cb(void (*cb)(const {} *msg));", topic.name.get_ref(), struct_name));
         }
     }
     Ok(())
@@ -206,17 +234,17 @@ pub fn generate_topic_ids(topics: &Vec<Topic>, out: &mut impl Write) -> Result<(
         match topic.topic_type {
             TopicType::Publisher => {
                 if pub_id >= 255 {
-                    return Err(anyhow!("publisher {} id out of range", topic.name))
+                    return Err(anyhow!("publisher {} id out of range", topic.name.get_ref()))
                 } else {
-                    writeln!(out, "#define {}_ID {}u", topic.name.to_uppercase(), pub_id)?;
+                    writeln!(out, "#define {}_ID {}u", topic.name.get_ref().to_uppercase(), pub_id)?;
                     pub_id += 1;
                 }
             },
             TopicType::Subscriber => {
                 if sub_id >= 127 {
-                    return Err(anyhow!("subscriber {} id out of range", topic.name));
+                    return Err(anyhow!("subscriber {} id out of range", topic.name.get_ref()));
                 } else {
-                    writeln!(out, "#define {}_ID {}u", topic.name.to_uppercase(), sub_id)?;
+                    writeln!(out, "#define {}_ID {}u", topic.name.get_ref().to_uppercase(), sub_id)?;
                     sub_id += 1;
                 }
             }
@@ -246,15 +274,15 @@ pub fn generate_topic_array(topics: &Vec<Topic>, out: &mut impl Write) -> Result
     writeln!(out, "const nros_topic_t nros_topics[{}] = {{", topics.len())?;
     for topic in topics {
         writeln!(out, "    {{")?;
-        writeln!(out, "        .topic_id = {}_ID,", topic.name.to_uppercase())?;
-        writeln!(out, "        .topic_name = \"{}\",", topic.name)?;
-        writeln!(out, "        .topic_type = \"{}\",", topic.msg_type)?;
+        writeln!(out, "        .topic_id = {}_ID,", topic.name.get_ref().to_uppercase())?;
+        writeln!(out, "        .topic_name = \"{}\",", topic.name.get_ref())?;
+        writeln!(out, "        .topic_type = \"{}\",", topic.msg_type.get_ref())?;
         match topic.topic_type {
             TopicType::Publisher => {
                 writeln!(out, "        .cb = NULL,")?;
             },
             TopicType::Subscriber => {
-                writeln!(out, "        .cb = nros_{}_subscriber_handler,", topic.name)?;
+                writeln!(out, "        .cb = nros_{}_subscriber_handler,", topic.name.get_ref())?;
             },
         }
         //writeln!(out, "        .qos = ")?;
@@ -302,8 +330,8 @@ pub fn generate_core_code(config: &NanoRosConfig, out_dir: &PathBuf) -> Result<(
     let mut user_functions: Vec<String> = Vec::new();
     let mut exposed_serde: Vec<String> = Vec::new();
     for topic in &config.topics {
-        let struct_name = ros_type_to_c_struct_name(&topic.msg_type);
-        let function_prefix = ros_type_to_c_prefix(&topic.msg_type);
+        let struct_name = ros_type_to_c_struct_name(&topic.msg_type.get_ref());
+        let function_prefix = ros_type_to_c_prefix(&topic.msg_type.get_ref());
         //generate_topic_ids();
         generate_user_c_struct(&topic.fields, &struct_name, &mut header, &mut emitted_structs)?;
         generate_serde_functions(&topic.fields, &function_prefix, &mut code, &mut emitted_functions, &mut exposed_serde)?;

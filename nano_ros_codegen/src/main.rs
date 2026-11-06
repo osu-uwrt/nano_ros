@@ -1,8 +1,14 @@
-use std::{env::args, fmt::format};
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::env::args;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use anyhow::{anyhow, bail, Context, Result};
 
+use crate::checks::{apply_caps, check_cap_conflicts, check_topic_names};
+use crate::diagnostics::{did_you_mean, Aborted, Diagnostic, Source};
 use crate::ros_toml_schema::NanoRosConfig;
+mod checks;
+mod diagnostics;
 mod ros_toml_schema;
 mod msg_file_parser;
 mod codegen;
@@ -68,55 +74,109 @@ fn parse_args(args: &[String]) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
 }
 
 /// Requires exactly "pkg/msg/Name".
-pub fn validate_topic_type(type_path: &str) -> Result<()> {
-    match type_path.split('/').collect::<Vec<_>>().as_slice() {
-        [pkg, "msg", name] if !pkg.is_empty() && !name.is_empty() => Ok(()),
-        _ => Err(anyhow!(
-            "invalid ros_type '{}': expected 'pkg/msg/Name' (e.g. 'sensor_msgs/msg/Imu')",
-            type_path
-        )),
-    }
+pub fn is_valid_topic_type(type_path: &str) -> bool {
+    matches!(
+        type_path.split('/').collect::<Vec<_>>().as_slice(),
+        [pkg, "msg", name] if !pkg.is_empty() && !name.is_empty()
+    )
 }
 
-fn main() -> Result<()> {
+/// Old ros.toml field names, so a stale example gets pointed at the new one.
+const RENAMED_FIELDS: &[(&str, &str)] = &[("direction", "topic_type"), ("ros_type", "msg_type")];
+
+/// Turns a ros.toml parse error into a diagnostic, suggesting the right name for unknown fields.
+fn toml_error(err: &toml::de::Error, source: &Source) -> Diagnostic {
+    let message = err.message().trim();
+    let mut d = Diagnostic::error("E0001", message);
+    if let Some(span) = err.span() {
+        d = d.primary(&source.span(span), "");
+    }
+    // serde's message is "unknown field `x`, expected one of `a`, `b`"
+    if let Some(rest) = message.strip_prefix("unknown field `") {
+        let names: Vec<&str> = rest.split('`').step_by(2).collect();
+        if let Some((unknown, expected)) = names.split_first() {
+            let renamed = RENAMED_FIELDS.iter().find(|(old, _)| old == unknown).map(|(_, new)| *new);
+            if let Some(new) = renamed.or_else(|| did_you_mean(unknown, expected.iter().copied())) {
+                d = d.help(format!("did you mean `{new}`?"));
+            }
+        }
+    }
+    d
+}
+
+/// Parses ros.toml and every message it uses, collecting all the errors instead of stopping at
+/// the first.
+fn load_config(toml_path: &Path, resolver: &MsgResolver) -> Result<NanoRosConfig> {
+    let text = std::fs::read_to_string(toml_path)
+        .with_context(|| format!("Reading {}", toml_path.display()))?;
+    let source = Source::new(toml_path, text);
+    let mut config: NanoRosConfig = match toml::from_str(&source.text) {
+        Ok(c) => c,
+        Err(e) => return Err(report(vec![toml_error(&e, &source)])),
+    };
+
+    let mut errors = check_topic_names(&config, &source);
+    for topic in &mut config.topics {
+        let span = source.span(topic.msg_type.span());
+        let msg_type = topic.msg_type.get_ref();
+        if !is_valid_topic_type(msg_type) {
+            errors.push(
+                Diagnostic::error("E0104", format!("invalid message type `{msg_type}`"))
+                    .primary(&span, "expected `pkg/msg/Name`")
+                    .help("write it like `sensor_msgs/msg/Imu`"),
+            );
+            continue;
+        }
+        match resolver.parse_type(msg_type, &span) {
+            Ok(fields) => {
+                topic.fields = fields;
+                errors.extend(apply_caps(topic, &source));
+            }
+            Err(e) => errors.push(e.downcast::<Diagnostic>()?),
+        }
+    }
+    if errors.is_empty() {
+        errors = check_cap_conflicts(&config, &source);
+    }
+    if !errors.is_empty() {
+        return Err(report(errors));
+    }
+    Ok(config)
+}
+
+/// Prints the errors (once each, since a bad nested type can be hit by several topics).
+fn report(errors: Vec<Diagnostic>) -> anyhow::Error {
+    let renderer = diagnostics::renderer();
+    let mut printed = HashSet::new();
+    for error in &errors {
+        let rendered = error.render(&renderer);
+        if printed.insert(rendered.clone()) {
+            eprintln!("{rendered}\n");
+        }
+    }
+    Aborted(printed.len()).into()
+}
+
+fn run() -> Result<()> {
     let args: Vec<String> = args().collect();
     let (toml_path, ros_prefix, user_types, out_dir) = parse_args(&args)?;
     println!("toml_path: {}, ros_pref: {}, user_types_dir: {}, out_dir: {}", toml_path.display(), ros_prefix.display(), user_types.display(), out_dir.display());
 
-    let toml_str = std::fs::read_to_string(toml_path)?;
-    let mut config: NanoRosConfig = toml::from_str(&toml_str)?;
-
-    let board_name = &config.board.name;
-
-    println!("[nano_ros_codegen] Board: {board_name}, Transport: {:?}", &config.board.transport);
-
     let resolver = MsgResolver::new(&ros_prefix, &user_types)?;
+    let config = load_config(&toml_path, &resolver)?;
 
-    for topic in &mut config.topics {
-        validate_topic_type(&topic.msg_type).with_context(|| format!("topic '{}'", topic.name))?;
-        topic.fields = resolver.parse_type(&topic.msg_type).with_context(|| format!("Resolving topic type '{}'", topic.msg_type))?;
+    println!("[nano_ros_codegen] Board: {}, Transport: {:?}", config.board.name, config.board.transport);
 
-        // //println!("\nsearching for [{:?}]\n", topic.ros_type);
-        // let path = find_ros_msg_file(&ros_prefix, &topic.ros_type, &user_types)?;
-        // //println!("path to type: {}", path.display());
-        // let fields = parse_msg_file(&ros_prefix, &user_types, &path)?;
-        // // for field in &fields {
-        // //     println!("FIELD NAME: {}", field.name);
-        // //     match &field.field_type {
-        // //         FieldType::Primitive(prim) => { println!("PRIMITIVE FIELD...")},
-        // //         FieldType::PrimArray(prim, len) => { println!("PRIMITIVE ARRAY OF SIZE: {}", len)},
-        // //         FieldType::Nested(type_name, nested_fields ) => {println!("NESTED TYPE: {}", type_name)},
-        // //         FieldType::NestedArray(type_name, nested_fields , len) => { println!("ARRAY OF NESTED TYPE: {}", type_name)}
-        // //     }
-        // // }
-        // topic.fields = fields;
-
-
-        //all_msg_fields.push(fields);
-
-    }
-    //generate_core_code(&config, &out_dir)?;
-    let (structs, functions) = generate_core_code(&config, &out_dir)?;
-
+    generate_core_code(&config, &out_dir)?;
     Ok(())
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("error: {err:#}");
+            ExitCode::FAILURE
+        }
+    }
 }
