@@ -2,10 +2,18 @@
 #include <poll.h>
 #include <stdio.h>
 #include <string.h>
+#include <chrono>
+#include <thread>
 
 using namespace nros;
 
-Agent::Agent(std::unique_ptr<Transport> transport) : transport_(std::move(transport)) {}
+// how long run() sleeps with nothing to do before it checks running_ again
+static constexpr int32_t IDLE_WAIT_MS = 100;
+
+Agent::Agent(std::unique_ptr<Transport> transport) : transport_(std::move(transport)) {
+    // subscriptions queue messages for the client from the executor thread, so wake run() up to send them
+    to_client_msg_queue_.set_on_push([this] { transport_->wake(); });
+}
 
 void decode_reg_frame(WireFrame &frame) {
     // for (size_t i = sizeof(nros_registration_payload_t); i < frame.payload.size(); i++) {
@@ -112,11 +120,23 @@ void Agent::run() {
     bool ack_topic_register = false;
 
     WireFrame frame;
+    OutboundMsg msg;
     while (running_) {
-        //Readiness r = transport_->wait_ready(0);
+        // sleeps until the client sends something, a subscription queues a message, or the timeout
+        Readiness r = transport_->wait_ready(IDLE_WAIT_MS);
+        if (r.error) {
+            // nothing reconnects the transport yet, so don't spin on a dead fd
+            std::this_thread::sleep_for(std::chrono::milliseconds(IDLE_WAIT_MS));
+        }
 
-        if (transport_->recv_frame(frame, 0)) {
+        while (transport_->recv_frame(frame, 0)) {
             frame_dispatch(frame);
+
+            // ack each REGISTER before the next frame can overwrite ack_
+            if (ack_.need_ack) {
+                ack_client();
+                ack_.need_ack = false;
+            }
         }
 
         if (need_registration) {
@@ -126,15 +146,11 @@ void Agent::run() {
             frame.header.length = 0;
             transport_->send_frame(frame, 0);
         }
-        if (to_client_msg_queue_.size() > 0) {
-            OutboundMsg msg = to_client_msg_queue_.wait_and_pop();
+
+        // after reading, since reading can use up a wake()
+        while (to_client_msg_queue_.try_pop(msg)) {
             printf("message header: type: %d, topic_id: %d\n", msg.frame.header.type, msg.frame.header.topic_id);
             transport_->send_frame(msg.frame, 0);
-        }
-
-        if (ack_.need_ack) {
-            ack_client();
-            ack_.need_ack = false;
         }
     }
 }
