@@ -105,14 +105,16 @@ void Agent::ack_client() {
 //     }
 // }
 
-void Agent::run() {
-    transport_->init();
+bool Agent::run() {
+    if (!transport_->init()) {
+        return false;
+    }
     running_ = true;
     bool need_registration = true;
     bool ack_topic_register = false;
 
     WireFrame frame;
-    while (running_) {
+    while (running_ && rclcpp::ok()) {
         //Readiness r = transport_->wait_ready(0);
 
         if (transport_->recv_frame(frame, 0)) {
@@ -137,6 +139,10 @@ void Agent::run() {
             ack_.need_ack = false;
         }
     }
+
+    running_ = false;
+    transport_->fini();
+    return true;
 }
 
 void Agent::frame_dispatch(WireFrame &frame) {
@@ -190,9 +196,9 @@ void Agent::spawn_client(bool expect_multiple_clients) {
 }
 
 void Agent::stop() {
-
+    running_ = false;
 }
 
 Agent::~Agent() {
-
+    stop();
 }
