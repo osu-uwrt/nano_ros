@@ -6,9 +6,7 @@
 #include <string.h>
 #include <assert.h>
 
-#define NROS_BUFFER_SIZE 1024
 #define NROS_TOPIC_ALLOC_SIZE 256
-#define NROS_MAX_STR_SIZE 128
 
 typedef enum {
     RX_WAIT_HEADER,

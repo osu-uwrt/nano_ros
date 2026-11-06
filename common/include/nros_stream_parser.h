@@ -8,7 +8,6 @@
 
 #define NROS_CRC16_POLY 0x1021
 #define NROS_CRC16_INIT 0xFFFF
-#define NROS_CRC_LEN 2
 
 typedef enum {
     HUNT_SYNC,

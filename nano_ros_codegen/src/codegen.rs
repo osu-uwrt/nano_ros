@@ -199,6 +199,101 @@ pub fn generate_user_function(topic: &Topic, code_out: &mut impl Write, user_fun
     Ok(())
 }
 
+/// Size of the CDR encapsulation header the library puts in front of every message
+const CDR_ENCAP_HEADER_LEN: usize = 4;
+/// Generated structs hold strings in char[256], so a string serializes to at most a 4-byte length
+/// plus 256 bytes (255 characters and the terminator)
+const STRING_MAX_BYTES: usize = 256;
+
+/// What's known about the write position, measured from the end of the encapsulation header
+/// (CDR aligns relative to there): it's `r` modulo `m`, where `m` is 1, 2, 4 or 8. A string makes
+/// it unknown (`m` = 1), and the next aligned field makes it known again.
+#[derive(Clone, Copy)]
+struct CdrPos {
+    r: usize,
+    m: usize,
+}
+
+impl CdrPos {
+    /// Bytes a fixed-size field of `size` bytes aligned to `align` takes, padding included, at
+    /// worst. Moves the position past it.
+    fn add(&mut self, align: usize, size: usize) -> usize {
+        let pad = if align <= self.m {
+            (align - self.r % align) % align
+        } else {
+            // any residue the position could have; the worst one sets the padding
+            (0..align / self.m).map(|k| (align - (self.r + k * self.m) % align) % align).max().unwrap_or(0)
+        };
+        if align > self.m {
+            // just aligned, so the position is now known modulo align
+            *self = CdrPos { r: size % align, m: align };
+        } else {
+            self.r = (self.r + pad + size) % self.m;
+        }
+        pad + size
+    }
+
+    fn add_prim(&mut self, prim: &PrimType) -> usize {
+        match prim {
+            PrimType::String => {
+                let len_prefix = self.add(4, 4);
+                *self = CdrPos { r: 0, m: 1 };
+                len_prefix + STRING_MAX_BYTES
+            }
+            _ => self.add(prim.align(), prim.size()),
+        }
+    }
+}
+
+/// Worst-case CDR size of `fields`
+fn max_cdr_size(fields: &[MsgField], pos: &mut CdrPos) -> usize {
+    let mut total = 0;
+    for field in fields {
+        total += match &field.field_type {
+            FieldType::Primitive(prim) => pos.add_prim(prim),
+            FieldType::PrimArray(prim, len) => (0..*len).map(|_| pos.add_prim(prim)).sum(),
+            FieldType::Nested(_, nested) => max_cdr_size(nested, pos),
+            FieldType::NestedArray(_, nested, len) => (0..*len).map(|_| max_cdr_size(nested, pos)).sum(),
+        };
+    }
+    total
+}
+
+/// Largest payload a topic's message can produce, encapsulation header included
+pub fn max_payload_size(topic: &Topic) -> usize {
+    CDR_ENCAP_HEADER_LEN + max_cdr_size(&topic.fields, &mut CdrPos { r: 0, m: 8 })
+}
+
+/// Defines <TOPIC>_MAX_SIZE for each topic, so firmware can size its own buffers from it
+pub fn generate_topic_sizes(topics: &Vec<Topic>, out: &mut impl Write) -> Result<()> {
+    writeln!(out, "// Largest payload each topic's message can serialize to, CDR encapsulation header included")?;
+    for topic in topics {
+        writeln!(out, "#define {}_MAX_SIZE {}u", topic.name.to_uppercase(), max_payload_size(topic))?;
+    }
+    writeln!(out)?;
+    Ok(())
+}
+
+/// Compile-time checks against the limits in protocol.h, so a message that can't fit in a frame or
+/// a name too long to register fails the build instead of being dropped at runtime
+pub fn generate_wire_checks(topics: &Vec<Topic>, out: &mut impl Write) -> Result<()> {
+    for topic in topics {
+        let upper = topic.name.to_uppercase();
+        let size = max_payload_size(topic);
+        writeln!(out, "_Static_assert({upper}_MAX_SIZE <= NROS_MAX_PAYLOAD,")?;
+        writeln!(out, "    \"topic `{}` ({}) can serialize to {size} bytes, more than NROS_MAX_PAYLOAD; raise NROS_BUFFER_SIZE in protocol.h or use a smaller message\");",
+            topic.name, topic.msg_type)?;
+        writeln!(out, "_Static_assert(sizeof(\"{}\") - 1 <= NROS_MAX_STR_SIZE,", topic.name)?;
+        writeln!(out, "    \"topic name `{}` is {} characters, longer than NROS_MAX_STR_SIZE in protocol.h\");",
+            topic.name, topic.name.len())?;
+        writeln!(out, "_Static_assert(sizeof(\"{}\") - 1 <= NROS_MAX_STR_SIZE,", topic.msg_type)?;
+        writeln!(out, "    \"message type `{}` (topic `{}`) is {} characters, longer than NROS_MAX_STR_SIZE in protocol.h\");",
+            topic.msg_type, topic.name, topic.msg_type.len())?;
+    }
+    writeln!(out)?;
+    Ok(())
+}
+
 pub fn generate_topic_ids(topics: &Vec<Topic>, out: &mut impl Write) -> Result<()> {
     let mut sub_id: u8 = 0;
     let mut pub_id: u8 = 127;
@@ -310,7 +405,10 @@ pub fn generate_core_code(config: &NanoRosConfig, out_dir: &PathBuf) -> Result<(
         generate_user_function(topic, &mut impl_code, &mut user_functions)?;
     }
     generate_topic_array(&config.topics, &mut impl_code)?;
-    generate_function_protos(&user_functions, &exposed_serde, &mut header)?; 
+    generate_wire_checks(&config.topics, &mut impl_code)?;
+    generate_function_protos(&user_functions, &exposed_serde, &mut header)?;
+    writeln!(header)?;
+    generate_topic_sizes(&config.topics, &mut header)?; 
 
     Ok((emitted_structs, emitted_functions))
 }
