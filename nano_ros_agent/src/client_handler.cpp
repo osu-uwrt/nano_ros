@@ -136,4 +136,37 @@ void ClientHandlerNode::publish_status(const WireFrame &frame) {
     array.header.stamp = now();
     array.status.push_back(status);
     diagnostics_pub_->publish(array);
+
+    std::lock_guard<std::mutex> lock(status_mutex_);
+    last_status_ = status;
+    last_status_time_ = std::chrono::steady_clock::now();
+}
+
+// Boards report about once a second, so three missed reports means it's gone quiet. Only boards
+// that have reported at least once can go stale.
+static constexpr std::chrono::seconds STATUS_STALE_AFTER{3};
+
+void ClientHandlerNode::check_stale() {
+    diagnostic_msgs::msg::DiagnosticStatus status;
+    std::chrono::steady_clock::duration silent;
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        if (!last_status_) {
+            return;
+        }
+        silent = std::chrono::steady_clock::now() - last_status_time_;
+        if (silent < STATUS_STALE_AFTER) {
+            return;
+        }
+        status = *last_status_;
+    }
+
+    auto secs = std::chrono::duration_cast<std::chrono::seconds>(silent).count();
+    status.level = diagnostic_msgs::msg::DiagnosticStatus::STALE;
+    status.message = "no status for " + std::to_string(secs) + " s (last: " + status.message + ")";
+
+    diagnostic_msgs::msg::DiagnosticArray array;
+    array.header.stamp = now();
+    array.status.push_back(status);
+    diagnostics_pub_->publish(array);
 }

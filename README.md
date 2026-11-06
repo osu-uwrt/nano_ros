@@ -68,7 +68,7 @@ static void fill_status(nros_status_t *s) {
 nros_enable_status(millis, fill_status); // fill can be NULL
 ```
 
-each report has the board name (from ros.toml), uptime, version, reset reason, faults and how many `nros_publish` calls failed. it shows as an error when faults are set, and a warning when the last reset was a watchdog or brownout
+each report has the board name (from ros.toml), uptime, version, reset reason, faults and how many `nros_publish` calls failed. it shows as an error when faults are set, and a warning when the last reset was a watchdog or brownout. if a board that was reporting goes quiet for 3 s, the agent marks it stale and keeps saying how long it's been
 
 ### codegen
 

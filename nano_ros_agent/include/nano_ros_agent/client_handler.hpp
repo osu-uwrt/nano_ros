@@ -5,7 +5,10 @@
 #include <rclcpp/generic_publisher.hpp>
 #include <rclcpp/generic_subscription.hpp>
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
+#include <chrono>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <thread>
 #include <functional>
 #include <vector>
@@ -47,6 +50,7 @@ public:
     ClientHandlerNode(const std::string &node_name, const rclcpp::NodeOptions &options, ThreadSafeQueue<OutboundMsg> &q)
     : rclcpp::Node("nros_client_" + node_name, options), cb_data_queue_{q} {
         diagnostics_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>("/diagnostics", 10);
+        stale_timer_ = create_wall_timer(std::chrono::seconds(1), [this]() { check_stale(); });
         executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
         executor_->add_node(this->get_node_base_interface());
         spin_thread_ = std::thread([this](){ executor_->spin(); });
@@ -64,6 +68,7 @@ public:
     void publish_status(const WireFrame &frame);
 private:
     void setup_topic(Topic &t);
+    void check_stale();
 
     bool expect_multiple_clients_ = false;
     uint32_t client_id_;
@@ -71,6 +76,11 @@ private:
     std::thread spin_thread_;
     OutboundCallback out_cb_;
     rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_pub_;
+    // the board's last status report, republished as STALE when reports stop
+    rclcpp::TimerBase::SharedPtr stale_timer_;
+    std::mutex status_mutex_;
+    std::optional<diagnostic_msgs::msg::DiagnosticStatus> last_status_;
+    std::chrono::steady_clock::time_point last_status_time_;
     ThreadSafeQueue<OutboundMsg> &cb_data_queue_;
     Topic topics_[UINT8_MAX];
 };
