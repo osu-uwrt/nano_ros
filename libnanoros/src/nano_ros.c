@@ -405,18 +405,18 @@ bool nros_publish(uint8_t topic_id, nros_serialize_fn fn, const void* msg) {
         return false;
     }
 
+    // CDR aligns fields relative to the end of the encapsulation header, so the header is copied
+    // in raw and the message gets its own buffer starting after it. Serializing the header into
+    // the same buffer shifts every 8-byte field's padding and ROS reads garbage.
+    memcpy(tx.payload_buffer, CDR_ENCAP_HEADER, sizeof(CDR_ENCAP_HEADER));
     ucdrBuffer buf;
-    ucdr_init_buffer(&buf, tx.payload_buffer, NROS_BUFFER_SIZE);
-
-    if (!ucdr_serialize_array_uint8_t(&buf, CDR_ENCAP_HEADER, sizeof(CDR_ENCAP_HEADER))) { // write in encapsulation header
-        return false;
-    }
+    ucdr_init_buffer(&buf, tx.payload_buffer + sizeof(CDR_ENCAP_HEADER), NROS_BUFFER_SIZE - sizeof(CDR_ENCAP_HEADER));
 
     if (!fn(&buf, msg)) {
         return false;
     }
 
-    size_t payload_len = ucdr_buffer_length(&buf);
+    size_t payload_len = sizeof(CDR_ENCAP_HEADER) + ucdr_buffer_length(&buf);
     tx.header = (nros_frame_header_t) {
         .length = payload_len,
         .topic_id = topic_id,
