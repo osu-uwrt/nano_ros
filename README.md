@@ -34,24 +34,22 @@ qos = "default"
 
 nano_ros_codegen reads this file and supplies the user with the code they'll need to publish/subscribe and gives the firmware library code an array of structures to use.
 
-this should be ran first. 
+### libnanoros
+
+link libnanoros into your firmware and point `nano_ros_generate()` at your ros.toml (see [building libnanoros](#libnanoros-1)). the codegen runs as part of your build, so there's no separate step
+
+then #include both "nano_ros.h" and "nano_ros_codegen.h". for each topic you get a C struct for its message type, plus `nros_publish_<name>()` for publishers and `nros_set_<name>_subscriber_cb()` for subscribers
 
 ### codegen
 
-codegen will accept a path to a ros.toml file, a path to the users ros installation prefix, and a path to a users custom .msg types
+you only need to run codegen by hand to look at its output. it accepts a path to a ros.toml file, the ros installation prefix, and a directory of custom .msg packages
 
 for example,
-```bash 
+```bash
 $ ./nano_ros_codegen <path to ros.toml> --user-msgs <path to user msgs, i.e. riptide_core> --ros-prefix <path to ros prefix, i.e. /opt/ros/humble>
 ```
 
-as of now (will change), generated files get spit out next to the ros.toml file supplied
-
-### libnanoros
-
-once code has been generated, you can use it in your project with libnanoros
-
-note: you should #include both "nano_ros.h" and "nano_ros_codegen.h"
+`--ros-prefix` defaults to the first entry of `AMENT_PREFIX_PATH`. generated files go in `generated/` next to the ros.toml unless you pass `--out-dir`. `--depfile <path>` also writes a Makefile-style list of every file codegen read, which is what the CMake integration uses
 
 ### nano_ros_agent
 
@@ -73,11 +71,11 @@ add the --release flag for a prod build
 
 the binary resides in target/debug/nano_ros_codegen if you didn't compile with the --release flag
 
-### libnanoros 
+### libnanoros
 note: for the time being, this is meant to be linked into a project inside of titan firmware via cmake
 
-add libnanoros as a subdir and link into project. For example
-```bash
+add libnanoros as a subdir, link it into your target, and call `nano_ros_generate()` on the same target. For example
+```cmake
 add_subdirectory(
     ${CMAKE_CURRENT_SOURCE_DIR}/<path to libnanoros root>
     ${CMAKE_CURRENT_BINARY_DIR}/libnanoros # only needed if outside current cmake tree
@@ -86,8 +84,16 @@ add_subdirectory(
 target_link_libraries(<target name> PUBLIC
     libnanoros
 )
+
+nano_ros_generate(<target name> ros.toml
+    USER_MSGS <path to user msgs, i.e. riptide_core> # optional
+    ROS_PREFIX /opt/ros/humble                        # optional, defaults to AMENT_PREFIX_PATH
+)
 ```
-if the generated code is not being compiled in, evil linky errors ensue
+
+this builds nano_ros_codegen from this repo with cargo (so it always matches libnanoros), runs it into the build directory, and compiles the generated code into the target. it reruns when ros.toml or any .msg file it uses changes. relative paths are relative to the CMakeLists.txt calling it
+
+cargo needs to be on your PATH (it is in the nix dev shell). to use a prebuilt codegen instead, configure with `-DNANO_ROS_CODEGEN_EXECUTABLE=<path>`
 
 ### nano_ros_agent
 
