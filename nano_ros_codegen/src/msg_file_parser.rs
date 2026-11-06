@@ -3,6 +3,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 
+use crate::diagnostics::{did_you_mean, Diagnostic, Source, Span};
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -35,6 +37,19 @@ pub enum FieldType {
     Nested(String, Vec<MsgField>), // (C type name, fields)
     /// Fixed-length array of nested type
     NestedArray(String, Vec<MsgField>, usize),
+    /// Variable-length array of a primitive: float32[] or float32[<=N]
+    PrimSeq(PrimType, Seq),
+    /// Variable-length array of a nested type
+    NestedSeq(String, Vec<MsgField>, Seq),
+}
+
+/// Length of a variable-length array. Firmware stores up to `cap` elements inline.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Seq {
+    /// N from "[<=N]", None for "[]"
+    pub bound: Option<usize>,
+    /// Set from the bound or ros.toml's max_len after parsing; 0 until then
+    pub cap: usize,
 }
 
 /// A single field in a .msg definition, after resolution.
@@ -42,6 +57,10 @@ pub enum FieldType {
 pub struct MsgField {
     pub name: String,
     pub field_type: FieldType,
+    /// The declaration as written, e.g. "float32[] data"
+    pub decl: String,
+    /// Where the declaration is in its .msg file
+    pub span: Span,
 }
 
 impl PrimType {
@@ -227,6 +246,16 @@ pub struct MsgResolver {
     user_pkgs: PackageIndex,
     /// Every .msg file parsed so far, for the build system's depfile
     read_files: RefCell<BTreeSet<PathBuf>>,
+    /// The directories searched, for error messages
+    roots: Vec<PathBuf>,
+}
+
+/// Why a "pkg/msg/Name" couldn't be resolved to a file.
+#[derive(Debug)]
+pub enum ResolveError {
+    BadPath,
+    NoPackage { pkg: String },
+    NoMsg { pkg: String, name: String, pkg_dir: PathBuf },
 }
 
 /// Result of resolving "pkg/Name" to an actual file.
@@ -238,11 +267,19 @@ pub struct ResolvedMsg {
 impl MsgResolver {
     /// `ros_share` is e.g. `/opt/ros/humble/share` (no `.join("share")` anymore).
     pub fn new(ros_share: &Path, user_types_path: &Path) -> Result<Self> {
+        let mut roots = vec![ros_share.to_path_buf()];
+        let user_pkgs = if user_types_path.as_os_str().is_empty() {
+            PackageIndex::new()
+        } else {
+            roots.push(user_types_path.to_path_buf());
+            build_package_index(user_types_path)
+                .with_context(|| format!("Indexing user packages in {}", user_types_path.display()))?
+        };
         Ok(Self {
             ros_pkgs: build_package_index(ros_share)
                 .with_context(|| format!("Indexing ROS packages in {}", ros_share.display()))?,
-            user_pkgs: build_package_index(user_types_path)
-                .with_context(|| format!("Indexing user packages in {}", user_types_path.display()))?,
+            user_pkgs,
+            roots,
             read_files: RefCell::new(BTreeSet::new()),
         })
     }
@@ -252,17 +289,46 @@ impl MsgResolver {
         self.read_files.borrow().iter().cloned().collect()
     }
 
+    /// Turns a resolve failure for `type_path` into an error pointing at `span`.
+    pub fn diagnose(&self, err: ResolveError, type_path: &str, span: &Span) -> Diagnostic {
+        match err {
+            ResolveError::BadPath => Diagnostic::error("E0104", format!("invalid message type `{type_path}`"))
+                .primary(span, "expected `pkg/msg/Name`")
+                .help("write it like `sensor_msgs/msg/Imu`"),
+            ResolveError::NoPackage { pkg } => {
+                let roots: Vec<String> = self.roots.iter().map(|r| r.display().to_string()).collect();
+                let mut d = Diagnostic::error("E0101", format!("no message package `{pkg}`"))
+                    .primary(span, format!("not found in {}", roots.join(" or ")));
+                let known = self.ros_pkgs.keys().chain(self.user_pkgs.keys()).map(String::as_str);
+                if let Some(suggestion) = did_you_mean(&pkg, known) {
+                    d = d.help(format!("did you mean `{suggestion}`?"));
+                } else if self.roots.len() == 1 {
+                    d = d.help("if it's a custom package, pass the directory it's in with --user-msgs");
+                }
+                d
+            }
+            ResolveError::NoMsg { pkg, name, pkg_dir } => {
+                let mut d = Diagnostic::error("E0102", format!("no message `{name}` in package `{pkg}`"))
+                    .primary(span, format!("not found in {}", pkg_dir.display()));
+                let msgs = list_msgs(&pkg_dir);
+                if let Some(suggestion) = did_you_mean(&name, msgs.iter().map(String::as_str)) {
+                    d = d.help(format!("did you mean `{pkg}/msg/{suggestion}`?"));
+                } else if did_you_mean(&name, ["Header"]).is_some() {
+                    d = d.help("did you mean `Header` (std_msgs/msg/Header)?");
+                }
+                d
+            }
+        }
+    }
+
     /// Resolve "pkg/Name" or "pkg/msg/Name" to a .msg file. ROS install wins over user types,
     /// but if the ROS package exists and lacks the message we still fall back to user types.
-    pub fn find_msg_file(&self, type_path: &str) -> Result<ResolvedMsg> {
-        let (pkg, name) = split_type_path(type_path)?;
+    pub fn find_msg_file(&self, type_path: &str) -> Result<ResolvedMsg, ResolveError> {
+        let (pkg, name) = split_type_path(type_path).map_err(|_| ResolveError::BadPath)?;
 
         let candidates = [self.ros_pkgs.get(pkg), self.user_pkgs.get(pkg)];
         if candidates.iter().all(|c| c.is_none()) {
-            return Err(anyhow!(
-                "package '{}' (from '{}') not found in ROS install or user types directory",
-                pkg, type_path
-            ));
+            return Err(ResolveError::NoPackage { pkg: pkg.to_string() });
         }
 
         for pkg_dir in candidates.into_iter().flatten() {
@@ -277,14 +343,26 @@ impl MsgResolver {
             }
         }
 
-        Err(anyhow!("msg '{}' not found in package '{}'", name, pkg))
+        let pkg_dir = candidates.into_iter().flatten().next().cloned().unwrap_or_default();
+        Err(ResolveError::NoMsg { pkg: pkg.to_string(), name: name.to_string(), pkg_dir })
     }
 
-    /// Convenience entry point: "riptide_msgs2/FirmwareStatus" -> parsed fields.
-    pub fn parse_type(&self, type_path: &str) -> Result<Vec<MsgField>> {
-        let resolved = self.find_msg_file(type_path)?;
+    /// Convenience entry point: "riptide_msgs2/FirmwareStatus" -> parsed fields. `span` is where the
+    /// type was named, for errors.
+    pub fn parse_type(&self, type_path: &str, span: &Span) -> Result<Vec<MsgField>> {
+        let resolved = self.find_msg_file(type_path).map_err(|e| self.diagnose(e, type_path, span))?;
         parse_msg_file(self, &resolved.path, &resolved.pkg)
     }
+}
+
+/// Message names in a package, for suggestions.
+fn list_msgs(pkg_dir: &Path) -> Vec<String> {
+    std::fs::read_dir(pkg_dir.join("msg"))
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter_map(|e| e.file_name().to_str()?.strip_suffix(".msg").map(str::to_string))
+        .collect()
 }
 
 /// Accepts "pkg/Name" or "pkg/msg/Name".
@@ -340,19 +418,22 @@ pub fn parse_msg_file(resolver: &MsgResolver, msg_path: &Path, owning_pkg: &str)
     let content = std::fs::read_to_string(msg_path)
         .with_context(|| format!("Failed to read {}", msg_path.display()))?;
     resolver.read_files.borrow_mut().insert(msg_path.to_path_buf());
-    parse_msg_str(resolver, &content, owning_pkg, msg_path)
+    parse_msg_str(resolver, &Source::new(msg_path, content), owning_pkg)
 }
 
-fn parse_msg_str(resolver: &MsgResolver, content: &str, owning_pkg: &str, source: &Path) -> Result<Vec<MsgField>> {
+fn parse_msg_str(resolver: &MsgResolver, source: &Source, owning_pkg: &str) -> Result<Vec<MsgField>> {
     let mut fields = Vec::new();
-    for line in content.lines() {
-        let line = match line.split('#').next() {
-            Some(l) => l.trim(),
-            None => continue,
-        };
+    let mut line_start = 0;
+    for raw_line in source.text.split_inclusive('\n') {
+        let offset = line_start;
+        line_start += raw_line.len();
+
+        let code = raw_line.split('#').next().unwrap_or("");
+        let line = code.trim();
         if line.is_empty() {
             continue;
         }
+        let line_offset = offset + (code.len() - code.trim_start().len());
 
         // Constants: "TYPE NAME=VALUE" — skip
         if line.contains('=') && !line.split_whitespace().next().map_or(false, |t| t.contains("<=")) {
@@ -369,6 +450,9 @@ fn parse_msg_str(resolver: &MsgResolver, content: &str, owning_pkg: &str, source
             Some(n) => n.to_string(),
             None => continue,
         };
+        let decl = format!("{type_token} {field_name}");
+        let decl_span = source.span(line_offset..line_offset + line.len());
+        let type_span = source.span(line_offset..line_offset + type_token.len());
 
         // Split "TYPE[...]" into base and array spec
         let (base_raw, array_spec) = match type_token.find('[') {
@@ -378,40 +462,47 @@ fn parse_msg_str(resolver: &MsgResolver, content: &str, owning_pkg: &str, source
         // Bounded strings: "string<=10" -> "string"
         let base_type_str = base_raw.split("<=").next().unwrap_or(base_raw);
 
-        // Dynamic ("[]") and bounded ("[<=N]") arrays aren't supported for fixed-size CDR.
-        let array_len = match array_spec {
-            None => None,
-            Some(spec) if spec.is_empty() || spec.starts_with("<=") => {
-                eprintln!(
-                    "WARNING: field '{}' is a dynamic array - skipping (not supported for fixed-size CDR)",
-                    field_name
-                );
-                continue;
-            }
-            Some(spec) => Some(spec.parse::<usize>().with_context(|| {
-                format!("Invalid array length in '{}' at {}", type_token, source.display())
-            })?),
+        enum Len {
+            One,
+            Fixed(usize),
+            Seq(Seq),
+        }
+        let bad_len = || {
+            Diagnostic::error("E0110", format!("invalid array length in `{decl}`"))
+                .primary(&type_span, "expected `[N]`, `[<=N]` or `[]`")
+        };
+        let len = match array_spec {
+            None => Len::One,
+            Some("") => Len::Seq(Seq { bound: None, cap: 0 }),
+            Some(spec) => match spec.strip_prefix("<=") {
+                Some(n) => Len::Seq(Seq { bound: Some(n.parse().map_err(|_| bad_len())?), cap: 0 }),
+                None => Len::Fixed(spec.parse().map_err(|_| bad_len())?),
+            },
         };
 
         if let Some(prim) = parse_primitive(base_type_str) {
-            let field_type = match array_len {
-                Some(n) => FieldType::PrimArray(prim, n),
-                None => FieldType::Primitive(prim),
+            if prim == PrimType::String && !matches!(len, Len::One) {
+                return Err(Diagnostic::error("E0110", format!("arrays of strings aren't supported yet: `{decl}`"))
+                    .primary(&decl_span, "firmware strings are fixed `char[256]` buffers")
+                    .into());
+            }
+            let field_type = match len {
+                Len::One => FieldType::Primitive(prim),
+                Len::Fixed(n) => FieldType::PrimArray(prim, n),
+                Len::Seq(seq) => FieldType::PrimSeq(prim, seq),
             };
-            fields.push(MsgField { name: field_name, field_type });
+            fields.push(MsgField { name: field_name, field_type, decl, span: decl_span });
         } else {
             let nested_type_str = resolve_nested_type(base_type_str, owning_pkg);
-            let resolved = resolver
-                .find_msg_file(&nested_type_str)
-                .with_context(|| format!("Resolving nested type '{}' for field '{}'", base_type_str, field_name))?;
-            let nested_fields = parse_msg_file(resolver, &resolved.path, &resolved.pkg)?;
+            let nested_fields = resolver.parse_type(&nested_type_str, &type_span)?;
             let c_type_name = ros_type_to_c_struct_name(&nested_type_str);
 
-            let field_type = match array_len {
-                Some(n) => FieldType::NestedArray(c_type_name, nested_fields, n),
-                None => FieldType::Nested(c_type_name, nested_fields),
+            let field_type = match len {
+                Len::One => FieldType::Nested(c_type_name, nested_fields),
+                Len::Fixed(n) => FieldType::NestedArray(c_type_name, nested_fields, n),
+                Len::Seq(seq) => FieldType::NestedSeq(c_type_name, nested_fields, seq),
             };
-            fields.push(MsgField { name: field_name, field_type });
+            fields.push(MsgField { name: field_name, field_type, decl, span: decl_span });
         }
     }
 

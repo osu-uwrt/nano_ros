@@ -7,3 +7,4 @@ edition = "2024"
 anyhow = "1.0.102"
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
+annotate-snippets = "0.12.17"
