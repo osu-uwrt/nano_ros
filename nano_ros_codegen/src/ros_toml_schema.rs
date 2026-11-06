@@ -47,6 +47,9 @@ impl Qos {
 pub struct BoardInfo {
     pub name: String,
     pub transport: Transport,
+    /// Which CAN bus the board is on, for `check`'s bus budget. Boards with the same bus share it.
+    #[serde(default)]
+    pub bus: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,6 +59,9 @@ pub struct Topic {
     pub msg_type: String,
     #[serde(default)]
     pub qos: Qos,
+    /// How often the topic is expected to be sent, for `check`'s bus budget. Codegen ignores it.
+    #[serde(default)]
+    pub rate_hz: Option<f64>,
     #[serde(skip)]
     pub fields: Vec<MsgField>,  // populated after parsing .msg file
 }

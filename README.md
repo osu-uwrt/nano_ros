@@ -47,6 +47,26 @@ the agent rejects a registration with an unknown QoS value by ACKing it with a n
 
 nano_ros_codegen reads this file and supplies the user with the code they'll need to publish/subscribe and gives the firmware library code an array of structures to use.
 
+### checking the whole robot
+
+codegen only sees one board. `nano_ros_codegen check` looks at every board's ros.toml together:
+
+```bash
+nano_ros_codegen check boards/*/ros.toml --bus internal=1000000 --bus external=250000
+```
+
+it fails when a topic has different message types on different boards, when a publisher and a subscriber's QoS can't match (ROS would silently never deliver), or when two boards have the same name. it also adds up each CAN bus's traffic, worst case, from these optional fields:
+
+```toml
+[board]
+bus = "internal"   # boards with the same bus share it
+
+[[topics]]
+rate_hz = 100      # how often this topic is sent
+```
+
+and prints a load table per bus, warning at 70% and failing over 100%. codegen itself ignores both fields
+
 ### libnanoros
 
 link libnanoros into your firmware and point `nano_ros_generate()` at your ros.toml (see [building libnanoros](#libnanoros-1)). the codegen runs as part of your build, so there's no separate step
