@@ -77,7 +77,9 @@ static speed_t get_baud(const char *baud_str) {
     return rv;
 }
 
-SerialTransport::SerialTransport(const char *dev, const char *baud) : dev_path{dev}, baud_rate{baud} {}
+SerialTransport::SerialTransport(const char *dev, const char *baud) : dev_path{dev}, baud_rate{baud} {
+    this->poll_fd.fd = -1;
+}
 
 bool SerialTransport::wait_fd(int16_t events, int32_t timeout) {
     struct pollfd pfd = { .fd = poll_fd.fd, .events = events, .revents = 0 };
@@ -426,6 +428,7 @@ bool SerialTransport::init() {
     this->completed_frames.clear();
     this->poll_fd.fd = fd;
     this->poll_fd.events = POLLIN | POLLOUT;
+    connected = true;
 
     fprintf(stdout, "success init\n");
 
@@ -433,12 +436,17 @@ bool SerialTransport::init() {
 }
 
 bool SerialTransport::fini() {
-    if (close(this->poll_fd.fd) != 0) {
-        fprintf(stderr, "couldn't close serial device (fd %d)\n", this->poll_fd.fd);
-        return false;
+    connected = false;
+    if (this->poll_fd.fd < 0) {
+        return true; // already closed
+    }
+    // linux frees the fd even when close fails (e.g. EIO after an unplug), so never close it twice
+    int rc = close(this->poll_fd.fd);
+    if (rc != 0) {
+        fprintf(stderr, "couldn't close serial device (fd %d): %s\n", this->poll_fd.fd, strerror(errno));
     }
     this->poll_fd.fd = -1;
-    return true;
+    return rc == 0;
 }
 
 SerialTransport::~SerialTransport() {

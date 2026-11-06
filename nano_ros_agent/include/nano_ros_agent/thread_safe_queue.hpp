@@ -32,6 +32,11 @@ public:
         return queue_.size();
     }
 
+    void clear() {
+        std::lock_guard<std::mutex> lock(mtx_);
+        queue_.clear();
+    }
+
     void stop() {
         stopping_ = true;
         cv_.notify_all();
