@@ -171,6 +171,13 @@ void Agent::frame_dispatch(WireFrame &frame) {
         break;
     }
 
+    case NROS_PACKET_STATUS: {
+        if (client_) {
+            client_->publish_status(frame);
+        }
+        break;
+    }
+
     }
 }
 

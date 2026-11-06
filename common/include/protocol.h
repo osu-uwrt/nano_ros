@@ -13,6 +13,7 @@ typedef enum {
     NROS_PACKET_ACK      = 0x03, // with status
     NROS_PACKET_REGISTER_DONE = 0x04, // marks registration as done
     NROS_PACKET_DISCOVER = 0x05, // from agent to tell mcu to give up its topics
+    NROS_PACKET_STATUS   = 0x06, // board health from the mcu, about once a second (nros_status_payload_t)
 } nros_packet_type_t;
 
 typedef struct {
@@ -55,5 +56,28 @@ typedef struct {
     uint8_t topic_id;    
     uint8_t status;      // nros_ack_status_t: 0 = ok, nonzero = error code
 } __attribute__((packed)) nros_ack_payload_t;
+
+// why the board last reset, in nros_status_payload_t.reset_reason. Values are part of the wire
+// protocol: append only.
+typedef enum {
+    NROS_RESET_UNKNOWN  = 0x00,
+    NROS_RESET_POWER_ON = 0x01,
+    NROS_RESET_WATCHDOG = 0x02,
+    NROS_RESET_BROWNOUT = 0x03,
+    NROS_RESET_SOFTWARE = 0x04, // the firmware asked for it, e.g. a reboot command
+    NROS_RESET_PIN      = 0x05, // reset / run pin
+    NROS_RESET_DEBUGGER = 0x06,
+    NROS_RESET_COUNT,           // number of valid values, not a reason
+} nros_reset_reason_t;
+
+typedef struct {
+    uint32_t uptime_ms;
+    uint32_t faults;            // board-defined bitmask, nonzero means something is wrong
+    uint32_t dropped_publishes; // nros_publish calls that failed since boot
+    uint8_t reset_reason;       // nros_reset_reason_t
+    uint8_t board_name_len;
+    uint8_t version_len;
+    // board name and version strings are appended after this on the wire
+} __attribute__((packed)) nros_status_payload_t;
 
 #endif // PROTOCOL_H

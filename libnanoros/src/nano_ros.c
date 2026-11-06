@@ -73,6 +73,13 @@ static nros_stream_parser_t parser = { 0 };
 
 static const uint8_t CDR_ENCAP_HEADER[4] = { 0x00, 0x01, 0x00, 0x00 };
 
+#define NROS_STATUS_PERIOD_MS 1000
+
+static nros_millis_fn status_millis;
+static nros_status_fill_fn status_fill;
+static uint32_t last_status_ms;
+static uint32_t dropped_publishes;
+
 // static void load_next_registration_frame() {
 //     if (tx.sending_reg_done_frame) {
 //         printf("done reg\n");
@@ -376,9 +383,12 @@ void rx_poll() {
     }
 }
 
+static void status_poll();
+
 void nros_spin() {
     rx_poll();
     tx_poll();
+    status_poll();
 }
 
 bool nros_init(nros_transport_t *t, bool use_nros_framing) {
@@ -400,7 +410,7 @@ bool nros_init(nros_transport_t *t, bool use_nros_framing) {
     return true;
 }
 
-bool nros_publish(uint8_t topic_id, nros_serialize_fn fn, const void* msg) {
+static bool publish_frame(uint8_t topic_id, nros_serialize_fn fn, const void* msg) {
     if (tx.state != TX_IDLE || !registration_complete) {
         return false;
     }
@@ -449,4 +459,77 @@ bool nros_publish(uint8_t topic_id, nros_serialize_fn fn, const void* msg) {
     printf("successful pub\n");
 
     return true;
+}
+
+bool nros_publish(uint8_t topic_id, nros_serialize_fn fn, const void* msg) {
+    bool ok = publish_frame(topic_id, fn, msg);
+    if (!ok) {
+        dropped_publishes++;
+    }
+    return ok;
+}
+
+void nros_enable_status(nros_millis_fn millis, nros_status_fill_fn fill) {
+    status_millis = millis;
+    status_fill = fill;
+    last_status_ms = millis() - NROS_STATUS_PERIOD_MS; // first report goes out as soon as we're connected
+}
+
+// strlen capped at max, for strings that go out with a uint8_t length
+static size_t bounded_strlen(const char *s, size_t max) {
+    size_t n = 0;
+    while (n < max && s[n]) {
+        n++;
+    }
+    return n;
+}
+
+// Sends a status report if one is due and the transmitter is free. Skipping a report is fine,
+// the next spin tries again.
+static void status_poll() {
+    if (!status_millis || !registration_complete || tx.state != TX_IDLE) {
+        return;
+    }
+    uint32_t now = status_millis();
+    if (now - last_status_ms < NROS_STATUS_PERIOD_MS) {
+        return;
+    }
+    last_status_ms = now;
+
+    nros_status_t status = { .faults = 0, .reset_reason = NROS_RESET_UNKNOWN, .version = NULL };
+    if (status_fill) {
+        status_fill(&status);
+    }
+    const char *version = status.version ? status.version : "";
+    size_t name_len = bounded_strlen(nros_board_name, UINT8_MAX);
+    size_t version_len = bounded_strlen(version, UINT8_MAX);
+
+    nros_status_payload_t payload = {
+        .uptime_ms = now,
+        .faults = status.faults,
+        .dropped_publishes = dropped_publishes,
+        .reset_reason = status.reset_reason,
+        .board_name_len = (uint8_t)name_len,
+        .version_len = (uint8_t)version_len,
+    };
+    size_t payload_len = sizeof(payload) + name_len + version_len;
+    if (payload_len > NROS_BUFFER_SIZE) {
+        return;
+    }
+    memcpy(tx.payload_buffer, &payload, sizeof(payload));
+    memcpy(tx.payload_buffer + sizeof(payload), nros_board_name, name_len);
+    memcpy(tx.payload_buffer + sizeof(payload) + name_len, version, version_len);
+
+    tx.header = (nros_frame_header_t) {
+        .length = payload_len,
+        .topic_id = 0,
+        .type = NROS_PACKET_STATUS,
+    };
+    tx.frame_len = nros_stream_encode_frame(&tx.header, tx.payload_buffer, payload_len, tx.buffer, NROS_BUFFER_SIZE);
+    if (tx.frame_len == 0) {
+        return;
+    }
+    tx.bytes_sent = 0;
+    tx.is_registration = false;
+    tx.state = TX_SENDING_FRAME;
 }
