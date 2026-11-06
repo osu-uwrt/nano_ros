@@ -23,6 +23,7 @@ public:
 private:
     static void on_frame_trampoline(const nros_frame_header_t *hdr, const uint8_t payload[], void *user_data);
     void on_frame(const nros_frame_header_t *hdr, const uint8_t payload[]);
+    bool wait_fd(int16_t events, int32_t timeout);
 
     nros_stream_parser_t parser;
     std::deque<WireFrame> completed_frames;

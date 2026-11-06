@@ -26,6 +26,11 @@ add_subdirectory(
     ${CMAKE_CURRENT_BINARY_DIR}/common
 )
 
+add_subdirectory(
+    ${CMAKE_CURRENT_SOURCE_DIR}/../external/canmore canmore
+)
+
+
 
 add_executable(nano_ros_agent 
     src/server.cpp
@@ -40,6 +45,7 @@ add_executable(nano_ros_agent
 target_link_libraries(nano_ros_agent PRIVATE
     nano_ros_common
     rclcpp::rclcpp
+    canmore_cpp
 )
 
 

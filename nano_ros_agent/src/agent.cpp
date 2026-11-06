@@ -56,6 +56,44 @@ void Agent::ack_client() {
     printf("acked\n");
 }
 
+// void Agent::run() {
+//     transport_->init();
+//     running_ = true;
+//     bool need_registration = true;
+//     bool ack_topic_register = false;
+
+//     WireFrame frame;
+//     while (running_) {
+//         Readiness r = transport_->wait_ready(0);
+
+//         if (r.readable) {
+//             if (transport_->recv_frame(frame, 0)) {
+//                 frame_dispatch(frame);
+//             }
+//         }
+
+//         if (r.writable) {
+//             if (need_registration) {
+//                 need_registration = false;
+//                 frame.header.type = NROS_PACKET_DISCOVER;
+//                 frame.header.topic_id = 0;
+//                 frame.header.length = 0;
+//                 transport_->send_frame(frame, 0);
+//             }
+//             if (to_client_msg_queue_.size() > 0) {
+//                 OutboundMsg msg = to_client_msg_queue_.wait_and_pop();
+//                 printf("message header: type: %d, topic_id: %d\n", msg.frame.header.type, msg.frame.header.topic_id);
+//                 transport_->send_frame(msg.frame, 0);
+//             }
+
+//             if (ack_.need_ack) {
+//                 ack_client();
+//                 ack_.need_ack = false;
+//             }
+//         }
+//     }
+// }
+
 void Agent::run() {
     transport_->init();
     running_ = true;
@@ -64,32 +102,28 @@ void Agent::run() {
 
     WireFrame frame;
     while (running_) {
-        Readiness r = transport_->wait_ready(0);
+        //Readiness r = transport_->wait_ready(0);
 
-        if (r.readable) {
-            if (transport_->recv_frame(frame, 0)) {
-                frame_dispatch(frame);
-            }
+        if (transport_->recv_frame(frame, 0)) {
+            frame_dispatch(frame);
         }
 
-        if (r.writable) {
-            if (need_registration) {
-                need_registration = false;
-                frame.header.type = NROS_PACKET_DISCOVER;
-                frame.header.topic_id = 0;
-                frame.header.length = 0;
-                transport_->send_frame(frame, 0);
-            }
-            if (to_client_msg_queue_.size() > 0) {
-                OutboundMsg msg = to_client_msg_queue_.wait_and_pop();
-                printf("message header: type: %d, topic_id: %d\n", msg.frame.header.type, msg.frame.header.topic_id);
-                transport_->send_frame(msg.frame, 0);
-            }
+        if (need_registration) {
+            need_registration = false;
+            frame.header.type = NROS_PACKET_DISCOVER;
+            frame.header.topic_id = 0;
+            frame.header.length = 0;
+            transport_->send_frame(frame, 0);
+        }
+        if (to_client_msg_queue_.size() > 0) {
+            OutboundMsg msg = to_client_msg_queue_.wait_and_pop();
+            printf("message header: type: %d, topic_id: %d\n", msg.frame.header.type, msg.frame.header.topic_id);
+            transport_->send_frame(msg.frame, 0);
+        }
 
-            if (ack_.need_ack) {
-                ack_client();
-                ack_.need_ack = false;
-            }
+        if (ack_.need_ack) {
+            ack_client();
+            ack_.need_ack = false;
         }
     }
 }

@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <termios.h>
 #include <string.h>
+#include <chrono>
 
 using namespace nros;
 
@@ -78,60 +79,49 @@ static speed_t get_baud(const char *baud_str) {
 
 SerialTransport::SerialTransport(const char *dev, const char *baud) : dev_path{dev}, baud_rate{baud} {}
 
+bool SerialTransport::wait_fd(int16_t events, int32_t timeout) {
+    struct pollfd pfd = { .fd = poll_fd.fd, .events = events, .revents = 0 };
+    int rc;
+    do {
+        rc = poll(&pfd, 1, timeout);
+    } while (rc < 0 && errno == EINTR);
+
+    if (rc <= 0) return false; // timed out (0) or poll failed (<0)
+    if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) { // port errored or was unplugged
+        connected = false;
+        return false;
+    }
+    return pfd.revents & events; 
+}
+
 // bool SerialTransport::send_frame(const WireFrame &frame, int32_t timeout) {
-//     // int32_t status = poll(&this->poll_fd, 1, timeout);
-//     // if (status < 0) {
-//     //     return false; // poll failed
-//     // } else if (status == 0) {
-//     //     return false; // nothing ready
-//     // } else if (this->poll_fd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
-//     //     return false; // disconnected or fd invalid
-//     // } else if (!(this->poll_fd.revents & POLLOUT)) {
-//     //     return false; // something went wrong
-//     // }
+//     uint8_t buf[NROS_BUFFER_SIZE];
+//     size_t n = nros_stream_encode_frame(&frame.header, frame.payload.data(), frame.payload.size(), buf, sizeof(buf));
+//     if (n == 0) {
+//         fprintf(stderr, "frame too big to send\n");
+//         return false;
+//     }
 
-//     ssize_t header_bytes_written = 0;
-//     while (header_bytes_written < sizeof(nros_frame_header_t)) {
-//         ssize_t n = write(poll_fd.fd, reinterpret_cast<const uint8_t *>(&frame.header), sizeof(nros_frame_header_t));
-//         if (n > 0) {
-//             header_bytes_written += n;
-//         } else if (n == 0) {
-//             printf("sent no header bytes\n");
+//     size_t written = 0;
+//     while (written < n) {
+//         ssize_t w = write(this->poll_fd.fd, buf + written, n - written); 
+//         if (w > 0) {
+//             written += w;
+//         } else if (w == 0) {
 //             return false;
 //         } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-//             printf("errno in header\n");
 //             struct pollfd pfd = this->poll_fd;
-//             if (poll(&pfd, 1, timeout) <= 0) {
-//                 return false;
-//             }
+//             if (poll(&pfd, 1, timeout) <= 0) return false;
 //         } else {
-//             fprintf(stderr, "error writing header: %s\n", strerror(errno));
-//             return false; 
+//             fprintf(stderr, "error writing: %s\n", strerror(errno));
+//             return false;
 //         }
 //     }
 
-//     ssize_t payload_bytes_written = 0;
-//     while (payload_bytes_written < frame.header.length) {
-//         ssize_t n = write(poll_fd.fd, frame.payload.data(), frame.header.length);
-//         if (n > 0) {
-//             payload_bytes_written += n;
-//         } else if (n == 0) {
-//             printf("sent no payload bytes\n");
-//             return false;
-//         } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-//             printf("errno in payload\n");
-//             struct pollfd pfd = this->poll_fd;
-//             if (poll(&pfd, 1, timeout) <= 0) {
-//                 return false;
-//             }
-//         } else {
-//             fprintf(stderr, "error writing payload: %s\n", strerror(errno));
-//             return false;
-//         }
-//     }
 //     return true;
 // }
 
+// work on
 bool SerialTransport::send_frame(const WireFrame &frame, int32_t timeout) {
     uint8_t buf[NROS_BUFFER_SIZE];
     size_t n = nros_stream_encode_frame(&frame.header, frame.payload.data(), frame.payload.size(), buf, sizeof(buf));
@@ -142,22 +132,79 @@ bool SerialTransport::send_frame(const WireFrame &frame, int32_t timeout) {
 
     size_t written = 0;
     while (written < n) {
-        ssize_t w = write(this->poll_fd.fd, buf + written, n - written); 
+        ssize_t w = write(this->poll_fd.fd, buf + written, n - written);
         if (w > 0) {
             written += w;
-        } else if (w == 0) {
-            return false;
-        } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            struct pollfd pfd = this->poll_fd;
-            if (poll(&pfd, 1, timeout) <= 0) return false;
+        } else if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            if (!wait_fd(POLLOUT, timeout)) {
+                return false;  // timed out or port error
+            }
+        } else if (w < 0 && errno == EINTR) {
+            continue;
         } else {
-            fprintf(stderr, "error writing: %s\n", strerror(errno));
+            fprintf(stderr, "error writing: %s\n", w < 0 ? strerror(errno) : "wrote 0 bytes");
+            connected = false;
             return false;
         }
     }
 
     return true;
 }
+
+// bool SerialTransport::send_frame(const WireFrame &frame, int32_t timeout) {
+//     uint8_t buf[NROS_BUFFER_SIZE];
+//     size_t n = nros_stream_encode_frame(&frame.header, frame.payload.data(), frame.payload.size(), buf, sizeof(buf));
+//     if (n == 0) {
+//         fprintf(stderr, "frame too big to send\n");
+//         return false;
+//     }
+
+//     size_t written = 0;
+//     while (written < n) {
+//         ssize_t w = write(this->poll_fd.fd, buf + written, n - written); 
+//         if (w > 0) {
+//             written += w;
+//         } else if (w == 0) {
+//             return false;
+//         } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+//             struct pollfd pfd = this->poll_fd;
+//             if (poll(&pfd, 1, timeout) <= 0) return false;
+//         } else {
+//             fprintf(stderr, "error writing: %s\n", strerror(errno));
+//             return false;
+//         }
+//     }
+
+//     return true;
+// }
+
+// OLD
+// bool SerialTransport::send_frame(const WireFrame &frame, int32_t timeout) {
+//     uint8_t buf[NROS_BUFFER_SIZE];
+//     size_t n = nros_stream_encode_frame(&frame.header, frame.payload.data(), frame.payload.size(), buf, sizeof(buf));
+//     if (n == 0) {
+//         fprintf(stderr, "frame too big to send\n");
+//         return false;
+//     }
+
+//     size_t written = 0;
+//     while (written < n) {
+//         ssize_t w = write(this->poll_fd.fd, buf + written, n - written); 
+//         if (w > 0) {
+//             written += w;
+//         } else if (w == 0) {
+//             return false;
+//         } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+//             struct pollfd pfd = this->poll_fd;
+//             if (poll(&pfd, 1, timeout) <= 0) return false;
+//         } else {
+//             fprintf(stderr, "error writing: %s\n", strerror(errno));
+//             return false;
+//         }
+//     }
+
+//     return true;
+// }
 
 // bool SerialTransport::recv_frame(WireFrame &frame, int32_t timeout) {
 //     // int32_t status = poll(&this->poll_fd, 1, timeout);
@@ -225,40 +272,91 @@ void SerialTransport::on_frame(const nros_frame_header_t *header, const uint8_t 
     this->completed_frames.push_back(std::move(frame));   
 }
 
-bool SerialTransport::recv_frame(WireFrame &frame, int32_t timeout) {
-    if (!completed_frames.empty()) {
-        frame = std::move(this->completed_frames.front());
-        this->completed_frames.pop_front();
-        return true;
-    }
+// bool SerialTransport::recv_frame(WireFrame &frame, int32_t timeout) {
+//     if (!completed_frames.empty()) {
+//         frame = std::move(this->completed_frames.front());
+//         this->completed_frames.pop_front();
+//         return true;
+//     }
 
-    // read header
-    uint8_t chunk[256];
+//     // read header
+//     uint8_t chunk[256];
+//     while (true) {
+//         ssize_t n = read(this->poll_fd.fd, chunk, sizeof(chunk));
+//         if (n > 0) {
+//             nros_stream_parser_feed(&this->parser, chunk, n, on_frame_trampoline, this);
+//             if (!completed_frames.empty()) {
+//                 frame = std::move(this->completed_frames.front());
+//                 this->completed_frames.pop_front();
+//                 return true;
+//             }
+//             continue;
+//         } else if (n == 0) {
+//             return false; // EOF / disconnect
+//         } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+//             struct pollfd pfd = this->poll_fd;
+//             if (poll(&pfd, 1, timeout) <= 0) {
+//                 return false; // timed out or poll error
+//             }
+//             // loop back and read again
+//         } else {
+//             fprintf(stderr, "error reading: %s\n", strerror(errno));
+//             return false;
+//         }
+//     }
+
+//     return true;
+// }
+
+bool SerialTransport::recv_frame(WireFrame &frame, int32_t timeout) {
+    using clock = std::chrono::steady_clock;
+    const auto deadline = clock::now() + std::chrono::milliseconds(timeout > 0 ? timeout : 0);
+
+
     while (true) {
+        if (!completed_frames.empty()) {
+            frame = std::move(this->completed_frames.front());
+            this->completed_frames.pop_front();
+            return true;
+        }
+
+        uint8_t chunk[256];
         ssize_t n = read(this->poll_fd.fd, chunk, sizeof(chunk));
         if (n > 0) {
             nros_stream_parser_feed(&this->parser, chunk, n, on_frame_trampoline, this);
-            if (!completed_frames.empty()) {
-                frame = std::move(this->completed_frames.front());
-                this->completed_frames.pop_front();
-                return true;
-            }
             continue;
-        } else if (n == 0) {
+        } 
+
+        if (n == 0) {
+            fprintf(stderr, "serial device closed\n");
+            connected = false;
             return false; // EOF / disconnect
-        } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            struct pollfd pfd = this->poll_fd;
-            if (poll(&pfd, 1, timeout) <= 0) {
-                return false; // timed out or poll error
-            }
-            // loop back and read again
-        } else {
+        } 
+
+        if (errno == EINTR) {
+            continue;
+        }
+
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
             fprintf(stderr, "error reading: %s\n", strerror(errno));
+            connected = false;
             return false;
         }
-    }
 
-    return true;
+        int32_t wait_ms = -1;
+        if (timeout >= 0) {
+            auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - clock::now()).count();
+            if (left <= 0) {
+                return false;
+            }
+            wait_ms = static_cast<int32_t>(left);
+        }
+
+        if (!wait_fd(POLLIN, wait_ms)) {
+            return false;
+        }
+
+    }
 }
 
 Readiness SerialTransport::wait_ready(int32_t timeout_ms) {
@@ -293,7 +391,7 @@ Readiness SerialTransport::wait_ready(int32_t timeout_ms) {
 }
 
 bool SerialTransport::init() {
-    int fd = open(this->dev_path, O_RDWR | O_NOCTTY);
+    int fd = open(this->dev_path, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd < 0) {
         fprintf(stderr, "couldn't open serial device at path [%s]\n", this->dev_path);
         return false;
@@ -314,8 +412,8 @@ bool SerialTransport::init() {
     cfsetispeed(&tty, baud);
     cfsetospeed(&tty, baud);
 
-    tty.c_cc[VMIN] = 0;
-    tty.c_cc[VTIME] = 0;
+    // tty.c_cc[VMIN] = 0;
+    // tty.c_cc[VTIME] = 0;
 
     if (tcsetattr(fd, TCSANOW, &tty) != 0) {
         fprintf(stderr, "couldn't set tty attributes for device\n");
