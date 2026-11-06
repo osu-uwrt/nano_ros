@@ -23,10 +23,29 @@ typedef struct {
     uint16_t length;
 } __attribute__((packed)) nros_frame_header_t;
 
+// QoS profile sent in nros_registration_payload_t.qos. The agent maps each value
+// to an rclcpp::QoS profile. Values are part of the wire protocol: append only.
+typedef enum {
+    NROS_QOS_DEFAULT         = 0x00, // rclcpp default: reliable, volatile, keep last 10
+    NROS_QOS_SENSOR_DATA     = 0x01, // rclcpp::SensorDataQoS: best effort, volatile, keep last 5
+    NROS_QOS_RELIABLE        = 0x02, // default with explicit reliable reliability
+    NROS_QOS_BEST_EFFORT     = 0x03, // default with best effort reliability
+    NROS_QOS_TRANSIENT_LOCAL = 0x04, // reliable, transient local (latched), keep last 1
+    NROS_QOS_SYSTEM_DEFAULT  = 0x05, // rclcpp::SystemDefaultsQoS (whatever the RMW picks)
+    NROS_QOS_COUNT,                  // number of valid values, not a QoS
+} nros_qos_t;
+
+// status byte in nros_ack_payload_t
+typedef enum {
+    NROS_ACK_OK              = 0x00,
+    NROS_ACK_UNSUPPORTED_QOS = 0x01,
+    NROS_ACK_MALFORMED       = 0x02,
+} nros_ack_status_t;
+
 // add flag for stating pub/sub/service
 typedef struct {
     uint8_t topic_id;
-    uint8_t qos;
+    uint8_t qos; // nros_qos_t
     uint8_t type_name_len;
     uint8_t topic_name_len;
     // type name and topic name are strings appended after this on the wire
@@ -34,7 +53,7 @@ typedef struct {
 
 typedef struct {
     uint8_t topic_id;    
-    uint8_t status;      // 0 = ok, nonzero = error code (name collision, unsupported qos, etc.)
+    uint8_t status;      // nros_ack_status_t: 0 = ok, nonzero = error code
 } __attribute__((packed)) nros_ack_payload_t;
 
 #endif // PROTOCOL_H

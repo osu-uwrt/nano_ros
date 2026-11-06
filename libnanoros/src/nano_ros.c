@@ -240,6 +240,13 @@ static bool nros_dispatch(const nros_frame_header_t *header, const uint8_t paylo
     }
     case NROS_PACKET_ACK: {
         printf("host ack: topic id[%d]\n", header->topic_id);
+        // older agents send an empty ACK, treat that as ok
+        if (header->length >= sizeof(nros_ack_payload_t)) {
+            const nros_ack_payload_t *ack = (const nros_ack_payload_t *)payload;
+            if (ack->status != NROS_ACK_OK) {
+                printf("host rejected topic id[%d]: status %d\n", ack->topic_id, ack->status);
+            }
+        }
         if (!rx.awaiting_ack) {
             break;
         }
