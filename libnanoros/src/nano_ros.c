@@ -373,14 +373,15 @@ void nros_spin() {
     tx_poll();
 }
 
-bool nros_init(nros_transport_t *t, bool packet_oriented) {
+bool nros_init(nros_transport_t *t, bool use_nros_framing) {
     // do error checking
     transport = t;
 
     nros_stream_parser_init(&parser);
 
+    bool init_ok = transport->init(t->user_data);
     bool open = transport->open();
-    if (!open) {
+    if (!open || !init_ok) {
         return false;
     }
 
