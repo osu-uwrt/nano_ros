@@ -7,25 +7,6 @@ using namespace nros;
 
 Agent::Agent(std::unique_ptr<Transport> transport) : transport_(std::move(transport)) {}
 
-void decode_reg_frame(WireFrame &frame) {
-    // for (size_t i = sizeof(nros_registration_payload_t); i < frame.payload.size(); i++) {
-    //     fprintf(stdout, "%c", frame.payload[i]);
-    // }
-    // fprintf(stdout, "\n");
-
-    uint8_t *bytes = frame.payload.data();
-    nros_registration_payload_t *payload = reinterpret_cast<nros_registration_payload_t *>(bytes);
-    uint8_t name_len = payload->topic_name_len;
-    uint8_t type_len = payload->type_name_len;
-    uint8_t *cursor = reinterpret_cast<uint8_t *>(payload);
-    cursor += sizeof(nros_registration_payload_t);
-    std::string name(cursor, cursor + type_len);
-    cursor += type_len;
-    std::string type(cursor, cursor + name_len);
-
-    fprintf(stdout, "\t topic name: [%s]\n\ttopic msg type: [%s]", name.c_str(), type.c_str());
-}
-
 nros_ack_status_t Agent::decode_registration_frame(WireFrame &frame, Topic &t) {
     if (frame.payload.size() < sizeof(nros_registration_payload_t)) {
         return NROS_ACK_MALFORMED;
