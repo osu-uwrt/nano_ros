@@ -2,6 +2,7 @@
 #include "protocol.h"
 #include "nros_stream_parser.h"
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 #include <assert.h>
 
