@@ -4,6 +4,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/generic_publisher.hpp>
 #include <rclcpp/generic_subscription.hpp>
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <memory>
 #include <thread>
 #include <functional>
@@ -45,6 +46,7 @@ public:
 
     ClientHandlerNode(const std::string &node_name, const rclcpp::NodeOptions &options, ThreadSafeQueue<OutboundMsg> &q)
     : rclcpp::Node("nros_client_" + node_name, options), cb_data_queue_{q} {
+        diagnostics_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>("/diagnostics", 10);
         executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
         executor_->add_node(this->get_node_base_interface());
         spin_thread_ = std::thread([this](){ executor_->spin(); });
@@ -59,6 +61,7 @@ public:
     void client_subscription_callback(uint8_t client_id, uint8_t topic_id, std::shared_ptr<rclcpp::SerializedMessage> msg);
     void on_client_connect(const std::vector<Topic> &new_topics);
     void on_client_disconnect();
+    void publish_status(const WireFrame &frame);
 private:
     void setup_topic(Topic &t);
 
@@ -67,6 +70,7 @@ private:
     rclcpp::executors::SingleThreadedExecutor::SharedPtr executor_;
     std::thread spin_thread_;
     OutboundCallback out_cb_;
+    rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_pub_;
     ThreadSafeQueue<OutboundMsg> &cb_data_queue_;
     Topic topics_[UINT8_MAX];
 };

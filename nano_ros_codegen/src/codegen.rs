@@ -310,6 +310,8 @@ pub fn generate_core_code(config: &NanoRosConfig, out_dir: &PathBuf) -> Result<(
         generate_user_function(topic, &mut impl_code, &mut user_functions)?;
     }
     generate_topic_array(&config.topics, &mut impl_code)?;
+    // {:?} quotes and escapes it, which matches C for anything a board name should contain
+    writeln!(impl_code, "const char nros_board_name[] = {:?};\n", config.board.name)?;
     generate_function_protos(&user_functions, &exposed_serde, &mut header)?; 
 
     Ok((emitted_structs, emitted_functions))

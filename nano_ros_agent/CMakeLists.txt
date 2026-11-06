@@ -8,6 +8,7 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -45,6 +46,7 @@ add_executable(nano_ros_agent
 target_link_libraries(nano_ros_agent PRIVATE
     nano_ros_common
     rclcpp::rclcpp
+    ${diagnostic_msgs_TARGETS}
     canmore_cpp
 )
 

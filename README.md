@@ -53,6 +53,23 @@ link libnanoros into your firmware and point `nano_ros_generate()` at your ros.t
 
 then #include both "nano_ros.h" and "nano_ros_codegen.h". for each topic you get a C struct for its message type, plus `nros_publish_<name>()` for publishers and `nros_set_<name>_subscriber_cb()` for subscribers
 
+#### board status
+call `nros_enable_status()` once and the board reports its health about once a second while connected. the agent publishes it on `/diagnostics`, so it shows up in `rqt_robot_monitor` and `ros2 topic echo /diagnostics`
+
+```c
+static uint32_t millis(void) { return to_ms_since_boot(get_absolute_time()); }
+
+static void fill_status(nros_status_t *s) {
+    s->version = FULL_BUILD_TAG;                  // anything that identifies the build
+    s->reset_reason = watchdog_caused_reboot() ? NROS_RESET_WATCHDOG : NROS_RESET_POWER_ON;
+    s->faults = *fault_list_reg;                  // board-defined bitmask, nonzero shows as an error
+}
+
+nros_enable_status(millis, fill_status); // fill can be NULL
+```
+
+each report has the board name (from ros.toml), uptime, version, reset reason, faults and how many `nros_publish` calls failed. it shows as an error when faults are set, and a warning when the last reset was a watchdog or brownout
+
 ### codegen
 
 you only need to run codegen by hand to look at its output. it accepts a path to a ros.toml file, the ros installation prefix, and a directory of custom .msg packages
