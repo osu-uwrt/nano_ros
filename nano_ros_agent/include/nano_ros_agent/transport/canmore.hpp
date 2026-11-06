@@ -22,6 +22,27 @@ private:
     void handleDecodeError(uint8_t clientId, unsigned int errorCode) override;
     void handleConflictingAgentError() override;
 
+    // puts the transport's wake fd in the poll group, so wake() interrupts processEvent
+    class WakePollFd : public Canmore::PollFDHandler {
+    public:
+        explicit WakePollFd(WakeEvent &wake)
+            : wake_(wake), descriptor_(Canmore::PollFDDescriptor::create(*this, wake.fd(), POLLIN)) {}
+
+        void populateFds(std::vector<std::weak_ptr<Canmore::PollFDDescriptor>> &descriptors) override {
+            descriptors.push_back(descriptor_);
+        }
+
+    protected:
+        void handleEvent(const pollfd &fd) override {
+            (void)fd;
+            wake_.drain();
+        }
+
+    private:
+        WakeEvent &wake_;
+        std::shared_ptr<Canmore::PollFDDescriptor> descriptor_;
+    };
+
     /**
      * same as #define CANMORE_MSG_SUBTYPE_XRCE_DDS 0 from canbus driver, should add subtype to reflect
      * nros agent. Problem exists however that in canbus_msg_write which transport code invokes, you 
@@ -31,6 +52,7 @@ private:
     static constexpr size_t MAX_PAYLOAD = CANMORE_MAX_MSG_LENGTH - sizeof(nros_frame_header_t);
     std::string ifname_;
     std::unique_ptr<Canmore::MsgAgent> can_agent_;
+    std::unique_ptr<WakePollFd> wake_poll_fd_;
     std::unique_ptr<Canmore::PollGroup> group_;
     std::deque<WireFrame> completed_frames_;
     uint8_t peer_client_id_;

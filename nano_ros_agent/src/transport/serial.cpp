@@ -360,10 +360,23 @@ bool SerialTransport::recv_frame(WireFrame &frame, int32_t timeout) {
 }
 
 Readiness SerialTransport::wait_ready(int32_t timeout_ms) {
-    Readiness r = { 0 };
+    Readiness r;
 
-    int32_t status = poll(&this->poll_fd, 1, timeout_ms);
-    if (status == 0) {
+    // one read can finish more than one frame
+    if (!completed_frames.empty()) {
+        r.readable = true;
+        return r;
+    }
+
+    // no POLLOUT: a serial port is almost always writable, so poll would never block. send_frame waits for
+    // POLLOUT itself when the port is full
+    struct pollfd fds[2] = {
+        { this->poll_fd.fd, POLLIN, 0 },
+        { wake_.fd(), POLLIN, 0 },
+    };
+
+    int32_t status = poll(fds, 2, timeout_ms);
+    if (status == 0 || (status < 0 && errno == EINTR)) {
         r.nothing_ready = true;
         return r;
     }
@@ -373,18 +386,16 @@ Readiness SerialTransport::wait_ready(int32_t timeout_ms) {
         return r;
     }
 
-    if (this->poll_fd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
+    if (fds[1].revents & POLLIN) {
+        wake_.drain();
+    }
+
+    if (fds[0].revents & (POLLHUP | POLLERR | POLLNVAL)) {
         r.error = true;
     }
 
-    if (this->poll_fd.revents & POLLIN) {
-        //fprintf(stdout, "poll in\n");
+    if (fds[0].revents & POLLIN) {
         r.readable = true;
-    }
-
-    if (this->poll_fd.revents & POLLOUT) {
-        //fprintf(stdout, "poll out\n");
-        r.writable = true;
     }
 
     return r;
