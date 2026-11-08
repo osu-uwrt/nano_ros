@@ -143,3 +143,37 @@ size_t nros_stream_encode_frame(const nros_frame_header_t *header, const uint8_t
 
     return total;
 }
+
+size_t nros_packet_encode_frame(const nros_frame_header_t *hdr, const uint8_t *payload, size_t payload_len, uint8_t *out, size_t cap) {
+    size_t total = sizeof(nros_frame_header_t) + payload_len;
+    if (cap < total) {
+        return 0;
+    }
+    out[0] = NROS_MAGIC0;   // harmless, and lets you eyeball frames in candump
+    out[1] = NROS_MAGIC1;
+    out[2] = hdr->type;
+    out[3] = hdr->topic_id;
+    put_u16(out + 4, hdr->length);
+    if (payload_len > 0 && payload != NULL) {
+        memcpy(out + sizeof(nros_frame_header_t), payload, payload_len);
+    }
+    return total;
+}
+
+bool nros_packet_decode_frame(const uint8_t *in, size_t len, nros_frame_header_t *hdr, const uint8_t **payload) {
+    if (len < sizeof(nros_frame_header_t)) {
+        return false;
+    }
+    uint16_t length;
+    get_u16(in + 4, &length); // local var: avoids taking the address of a packed member
+    if (len - sizeof(nros_frame_header_t) != length) {
+        return false; // CANmore truncated it, or the message is malformed
+    }
+    hdr->magic[0] = in[0];
+    hdr->magic[1] = in[1];
+    hdr->type = in[2];
+    hdr->topic_id = in[3];
+    hdr->length = length;
+    *payload = in + sizeof(nros_frame_header_t);
+    return true;
+}

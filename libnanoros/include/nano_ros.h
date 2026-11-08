@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include "protocol.h"
 
+// user defined transport v-table that the library calls through 
 typedef struct {
     bool (*init)(void *ctx);
     bool (*open)();
@@ -26,7 +27,9 @@ typedef struct {
 
 typedef bool (*nros_serialize_fn)(ucdrBuffer* buf, const void* msg);
 
+// topics that codegen spat out
 extern const nros_topic_t nros_topics[];
+// amount of topics in nros_topics
 extern const uint8_t nros_topic_count;
 
 bool nros_init(nros_transport_t *t, bool use_nros_framing);

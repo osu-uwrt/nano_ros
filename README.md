@@ -3,6 +3,9 @@
 a lightweight firmware library, codegen tool, and host side agent
 
 ## usage
+git clone --recurse-submodules <your-repo-url>
+or if already cloned
+git submodule update --init --recursive
 
 ### ros.toml
 ros.toml is the file where topics are defined that will be used on a board
