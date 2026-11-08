@@ -71,6 +71,12 @@ $ ./nano_ros_codegen <path to ros.toml> --user-msgs <path to user msgs, i.e. rip
 
 spawn the agent on a port and go brr
 
+```bash
+$ nano_ros_agent serial /dev/ttyACM0 [baud]      # baud defaults to 115200
+```
+
+run it with no arguments for the usage. ROS arguments go after `--ros-args` as usual. ctrl-c stops it
+
 ## building
 
 ### nano_ros_codegen
