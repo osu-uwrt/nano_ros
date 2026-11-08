@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <memory>
 #include <string>
 #include <variant>
@@ -21,7 +22,8 @@ public:
     Agent(std::unique_ptr<Transport> transport);
     ~Agent();
 
-    void run();
+    // returns false if the transport couldn't be opened. Runs until stop() or rclcpp shuts down (SIGINT/SIGTERM)
+    bool run();
     void stop();
 
     bool has_pending_send;
@@ -38,9 +40,9 @@ private:
     std::shared_ptr<ClientHandlerNode> client_; // for testing
     std::vector<Topic> new_topics_;
     size_t client_id_idx_ = 0; // temp for dealing with client ids until its actually implemented
-    AckStatus ack_;
+    AckStatus ack_ {};
     //Topic topics[UINT8_MAX] = { 0 }; // indexed by topic id (uint8 can change) 
-    bool running_;
+    std::atomic<bool> running_ = false;
 };
 
 } // namespace nros
