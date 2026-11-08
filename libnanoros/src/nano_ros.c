@@ -119,7 +119,7 @@ static void load_next_registration_frame() {
         tx.header.type = NROS_PACKET_REGISTER_DONE;
         tx.header.length = 0;
         tx.header.topic_id = 0;
-        tx.frame_len = encode_tx_frame(&tx.header, NULL, 0, tx.buffer, NROS_BUFFER_SIZE);
+        tx.frame_len = encode_tx_frame(NULL, 0);
         if (tx.frame_len == 0) {
             printf("failed to encode register frame");
         }
@@ -157,7 +157,7 @@ static void load_next_registration_frame() {
         tx.header.length = payload_size;
         tx.header.topic_id = topic->topic_id;
         tx.header.type = NROS_PACKET_REGISTER;
-        tx.frame_len = encode_tx_frame(&tx.header, tx.payload_buffer, payload_size, tx.buffer, NROS_BUFFER_SIZE);
+        tx.frame_len = encode_tx_frame(tx.payload_buffer, payload_size);
         if (tx.frame_len == 0) {
             printf("frame too big for topic id [%d], not sending \n", topic->topic_id);
         }
@@ -376,7 +376,7 @@ bool nros_publish(uint8_t topic_id, nros_serialize_fn fn, const void* msg) {
         .type = NROS_PACKET_DATA,
     };
 
-    tx.frame_len = encode_tx_frame(&tx.header, tx.payload_buffer, payload_len, tx.buffer, NROS_BUFFER_SIZE);
+    tx.frame_len = encode_tx_frame(tx.payload_buffer, payload_len);
     if (tx.frame_len == 0) {
         printf("publish frame too big for topic id[%d], not sending", topic_id);
         return false;
