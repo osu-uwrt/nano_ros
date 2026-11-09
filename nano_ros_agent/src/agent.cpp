@@ -99,15 +99,18 @@ bool Agent::run() {
         //Readiness r = transport_->wait_ready(0);
 
         if (transport_->recv_frame(frame, 0)) {
+            printf("receiving frame\n");
             frame_dispatch(frame);
         }
 
         if (need_registration) {
+            printf("starting registration\n");
             need_registration = false;
             frame.header.type = NROS_PACKET_DISCOVER;
             frame.header.topic_id = 0;
             frame.header.length = 0;
             transport_->send_frame(frame, 0);
+            printf("sent frame\n");
         }
         if (to_client_msg_queue_.size() > 0) {
             OutboundMsg msg = to_client_msg_queue_.wait_and_pop();
@@ -116,6 +119,7 @@ bool Agent::run() {
         }
 
         if (ack_.need_ack) {
+            printf("acking\n");
             ack_client();
             ack_.need_ack = false;
         }

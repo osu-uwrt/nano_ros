@@ -21,6 +21,8 @@ private:
     void handleMessage(uint8_t clientId, uint8_t subtype, std::span<const uint8_t> data) override;
     void handleDecodeError(uint8_t clientId, unsigned int errorCode) override;
     void handleConflictingAgentError() override;
+    
+    static const char *decode_error_str(unsigned int errorCode);
 
     /**
      * same as #define CANMORE_MSG_SUBTYPE_XRCE_DDS 0 from canbus driver, should add subtype to reflect

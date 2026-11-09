@@ -1,0 +1,1 @@
+agent should handle namespacing based on what namespace its using
