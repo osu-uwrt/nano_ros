@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/osu-uwrt/nano_ros/master/nano_ros_codegen/ros.schema.json",
+  "title": "nano_ros ros.toml",
+  "description": "A board's topics for nano_ros_codegen. Keep in sync with src/ros_toml_schema.rs; `cargo test` checks the enum values.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["board", "topics"],
+  "properties": {
+    "board": {
+      "description": "The board this firmware runs on.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "transport"],
+      "properties": {
+        "name": {
+          "description": "Board name, shown by the agent.",
+          "type": "string",
+          "minLength": 1
+        },
+        "transport": {
+          "description": "How the board talks to the agent.",
+          "enum": ["usb", "can"]
+        }
+      }
+    },
+    "topics": {
+      "description": "The board's publishers and subscribers.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "topic_type", "msg_type"],
+        "properties": {
+          "name": {
+            "description": "ROS topic name. Also used in generated C names like nros_publish_<name>, so it has to be a C identifier.",
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "maxLength": 128
+          },
+          "topic_type": {
+            "description": "Whether the board publishes or subscribes.",
+            "enum": ["publisher", "subscriber"]
+          },
+          "msg_type": {
+            "description": "Message type, written pkg/msg/Name.",
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*/msg/[A-Za-z][A-Za-z0-9_]*$",
+            "examples": ["std_msgs/msg/UInt8", "sensor_msgs/msg/Imu"],
+            "maxLength": 128
+          },
+          "qos": {
+            "description": "QoS profile the agent uses for this topic.",
+            "default": "default",
+            "oneOf": [
+              { "const": "default", "description": "Reliable, volatile, keep last 10." },
+              { "const": "sensor_data", "description": "Best effort, volatile, keep last 5 (rclcpp::SensorDataQoS)." },
+              { "const": "reliable", "description": "Reliable, volatile, keep last 10." },
+              { "const": "best_effort", "description": "Best effort, volatile, keep last 10." },
+              { "const": "transient_local", "description": "Reliable, transient local (late joiners get the last message), keep last 1." },
+              { "const": "system_default", "description": "Whatever the RMW picks (rclcpp::SystemDefaultsQoS)." }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
