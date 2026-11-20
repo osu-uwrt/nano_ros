@@ -6,9 +6,7 @@
 #include <string.h>
 #include <assert.h>
 
-#define NROS_BUFFER_SIZE 1024
 #define NROS_TOPIC_ALLOC_SIZE 256
-#define NROS_MAX_STR_SIZE 128
 
 typedef enum {
     RX_WAIT_HEADER,
@@ -65,6 +63,7 @@ typedef struct {
 static nros_transport_t *transport;
 static nros_topic_t const *topic_map[NROS_TOPIC_ALLOC_SIZE] = { 0 };
 static bool registration_complete = false;
+static bool nros_framing = false;
 
 static nros_rx_ctx_t rx = { .state = RX_WAIT_HEADER };
 static nros_tx_ctx_t tx = { .state = TX_IDLE };
@@ -113,6 +112,13 @@ static uint32_t dropped_publishes;
 //     tx.state = TX_SENDING_HEADER;
 // }
 
+static size_t encode_tx_frame(const uint8_t *payload, size_t payload_len) {
+    if (nros_framing) {
+        return nros_stream_encode_frame(&tx.header, payload, payload_len, tx.buffer, NROS_BUFFER_SIZE);
+    }
+    return nros_packet_encode_frame(&tx.header, payload, payload_len, tx.buffer, NROS_BUFFER_SIZE);
+}
+
 // needs more error checking 
 static void load_next_registration_frame() {
     if (tx.sending_reg_done_frame) {
@@ -120,7 +126,7 @@ static void load_next_registration_frame() {
         tx.header.type = NROS_PACKET_REGISTER_DONE;
         tx.header.length = 0;
         tx.header.topic_id = 0;
-        tx.frame_len = nros_stream_encode_frame(&tx.header, NULL, 0, tx.buffer, NROS_BUFFER_SIZE);
+        tx.frame_len = encode_tx_frame(NULL, 0);
         if (tx.frame_len == 0) {
             printf("failed to encode register frame");
         }
@@ -158,7 +164,7 @@ static void load_next_registration_frame() {
         tx.header.length = payload_size;
         tx.header.topic_id = topic->topic_id;
         tx.header.type = NROS_PACKET_REGISTER;
-        tx.frame_len = nros_stream_encode_frame(&tx.header, tx.payload_buffer, payload_size, tx.buffer, NROS_BUFFER_SIZE);
+        tx.frame_len = encode_tx_frame(tx.payload_buffer, payload_size);
         if (tx.frame_len == 0) {
             printf("frame too big for topic id [%d], not sending \n", topic->topic_id);
         }
@@ -209,26 +215,6 @@ static void tx_frame_complete() {
     // }
     tx.state = TX_IDLE;
 }
-
-// static bool nros_dispatch(uint8_t topic_id, ucdrBuffer *buf) {
-//     switch (rx.header.type) {
-//     case NROS_PACKET_REGISTER:
-//         break;
-//     case NROS_PACKET_DATA:
-//         topic_map[topic_id]->cb(buf);
-//         break;
-//     case NROS_PACKET_ACK:
-//         printf("host ack: topic id[%d]", rx.header.topic_id);
-//         rx.awaiting_ack = false;
-//         break;
-//     case NROS_PACKET_REGISTER_DONE:
-//         break;
-//     case NROS_PACKET_DISCOVER:
-//         printf("starting registration\n");
-//         register_topics_start();
-//         break;
-//     }
-// }
 
 static bool nros_dispatch(const nros_frame_header_t *header, const uint8_t payload[]) {
     switch (header->type) {
@@ -281,106 +267,59 @@ static bool nros_dispatch(const nros_frame_header_t *header, const uint8_t paylo
     }
 }
 
-// void tx_poll() {
-//     if (tx.state == TX_IDLE) {
-//         return;
-//     }
-
-//     if (tx.state == TX_SENDING_HEADER) {
-//         size_t n = transport->write((uint8_t *)&tx.header + tx.header_bytes_sent, sizeof(tx.header) - tx.header_bytes_sent, transport->user_data);
-//         tx.header_bytes_sent += n;
-
-//         if (tx.header_bytes_sent < sizeof(tx.header)) {
-//             return;
-//         }
-
-//         if (tx.payload_len == 0) {
-//             tx_frame_complete();
-//             return;
-//         }
-//         tx.state = TX_SENDING_PAYLOAD;
-//     }
-
-//     if (tx.state == TX_SENDING_PAYLOAD) {
-//         size_t n = transport->write(tx.buffer + tx.payload_bytes_sent, tx.payload_len - tx.payload_bytes_sent, transport->user_data);
-//         tx.payload_bytes_sent += n;
-//         if (tx.payload_bytes_sent < tx.payload_len) {
-//             return;
-//         }
-//         tx_frame_complete();
-//     }
-// }
-
 void tx_poll() {
     if (tx.state == TX_IDLE) {
         return;
     }
 
-    if (tx.state == TX_SENDING_FRAME) {
-        // debug
-        //uint8_t *start = tx.buffer + tx.bytes_sent;
-        size_t n = transport->write(tx.buffer + tx.bytes_sent, tx.frame_len - tx.bytes_sent, transport->user_data);
-        // for (int i = 0; i < n; i++) {
-        //     printf("%02hhX", start[i]);
-        // }
-        // printf("\n");
-        // printf("wrote %d bytes\n", n);
-        tx.bytes_sent += n;
-        if (tx.bytes_sent < tx.frame_len) {
+    size_t n = transport->write(tx.buffer + tx.bytes_sent, tx.frame_len - tx.bytes_sent, transport->user_data);
+
+    if (!nros_framing) {
+        if (n == 0) {
             return;
         }
+
+        if (n != tx.frame_len) {
+            printf("truncated frame written: wrote %zu with frame size %zu\n", n, tx.frame_len);
+        }
         tx_frame_complete();
+        return;
     }
+
+    tx.bytes_sent += n;
+    if (tx.bytes_sent < tx.frame_len) {
+        return;
+    }
+
+    tx_frame_complete();
 }
 
-// void rx_poll() {
-//     if (rx.state == RX_WAIT_HEADER) {
-//         size_t n = transport->read((uint8_t *)&rx.header + rx.bytes_have, sizeof(rx.header) - rx.bytes_have, transport->user_data);
-//         rx.bytes_have += n;
-//         if (rx.bytes_have < sizeof(rx.header)) {
-//             return;
-//         }
-
-//         if (rx.header.magic != NROS_MAGIC || rx.header.length > NROS_BUFFER_SIZE) {
-//             printf("rx broke\n");
-//             rx.state = RX_WAIT_HEADER; // something went wrong, ignore and resync
-//             rx.bytes_have = 0;
-//             return;
-//         }
-
-//         rx.bytes_have = 0;
-//         rx.state = RX_WAIT_PAYLOAD;
-//     }
-
-//     if (rx.state == RX_WAIT_PAYLOAD) {
-//         size_t n = transport->read(rx.buffer + rx.bytes_have, rx.header.length - rx.bytes_have, transport->user_data);
-//         rx.bytes_have += n;
-
-//         if (rx.bytes_have < rx.header.length) {
-//             return;
-//         }
-
-//         ucdrBuffer buf;
-//         ucdr_init_buffer(&buf, rx.buffer, rx.header.length);
-//         nros_dispatch(rx.header.topic_id, &buf);
-
-//         rx.bytes_have = 0;
-//         rx.state = RX_WAIT_HEADER;
-//     } 
-// }
-
 void on_frame_cb(const nros_frame_header_t *header, const uint8_t payload[], void *user_data) {
-    // ucdrBuffer buf;
-    // ucdr_init_buffer(&buf, (uint8_t *)payload, header->length);
     nros_dispatch(header, payload);
 }
 
 void rx_poll() {
-    uint8_t chunk[64];
-    size_t n = transport->read(chunk, sizeof(chunk), transport->user_data);
-    if (n > 0) {
-        nros_stream_parser_feed(&parser, chunk, n, on_frame_cb, NULL);
+    if (nros_framing) {
+        uint8_t chunk[64];
+        size_t n = transport->read(chunk, sizeof(chunk), transport->user_data);
+        if (n > 0) {
+            nros_stream_parser_feed(&parser, chunk, n, on_frame_cb, NULL);
+        }
+        return;
     }
+    
+    size_t n = transport->read(rx.buffer, sizeof(rx.buffer), transport->user_data);
+    if (n == 0) {
+        return;
+    }
+
+    nros_frame_header_t hdr;
+    const uint8_t *payload;
+    if (!nros_packet_decode_frame(rx.buffer, n, &hdr, &payload)) {
+        printf("dropped bad packet (%zu bytes)\n", n);
+        return;
+    }
+    nros_dispatch(&hdr, payload);
 }
 
 static void status_poll();
@@ -394,8 +333,11 @@ void nros_spin() {
 bool nros_init(nros_transport_t *t, bool use_nros_framing) {
     // do error checking
     transport = t;
+    nros_framing = use_nros_framing;
 
-    nros_stream_parser_init(&parser);
+    if (nros_framing) {
+        nros_stream_parser_init(&parser);
+    }
 
     bool init_ok = transport->init(t->user_data);
     bool open = transport->open();
@@ -415,25 +357,25 @@ static bool publish_frame(uint8_t topic_id, nros_serialize_fn fn, const void* ms
         return false;
     }
 
+    // CDR aligns fields relative to the end of the encapsulation header, so the header is copied
+    // in raw and the message gets its own buffer starting after it. Serializing the header into
+    // the same buffer shifts every 8-byte field's padding and ROS reads garbage.
+    memcpy(tx.payload_buffer, CDR_ENCAP_HEADER, sizeof(CDR_ENCAP_HEADER));
     ucdrBuffer buf;
-    ucdr_init_buffer(&buf, tx.payload_buffer, NROS_BUFFER_SIZE);
-
-    if (!ucdr_serialize_array_uint8_t(&buf, CDR_ENCAP_HEADER, sizeof(CDR_ENCAP_HEADER))) { // write in encapsulation header
-        return false;
-    }
+    ucdr_init_buffer(&buf, tx.payload_buffer + sizeof(CDR_ENCAP_HEADER), NROS_BUFFER_SIZE - sizeof(CDR_ENCAP_HEADER));
 
     if (!fn(&buf, msg)) {
         return false;
     }
 
-    size_t payload_len = ucdr_buffer_length(&buf);
+    size_t payload_len = sizeof(CDR_ENCAP_HEADER) + ucdr_buffer_length(&buf);
     tx.header = (nros_frame_header_t) {
         .length = payload_len,
         .topic_id = topic_id,
         .type = NROS_PACKET_DATA,
     };
 
-    tx.frame_len = nros_stream_encode_frame(&tx.header, tx.payload_buffer, payload_len, tx.buffer, NROS_BUFFER_SIZE);
+    tx.frame_len = encode_tx_frame(tx.payload_buffer, payload_len);
     if (tx.frame_len == 0) {
         printf("publish frame too big for topic id[%d], not sending", topic_id);
         return false;
@@ -461,6 +403,16 @@ static bool publish_frame(uint8_t topic_id, nros_serialize_fn fn, const void* ms
     return true;
 }
 
+/**
+ * @brief codegen calls through to this function with the generated id and serialization function
+ *        and starts the tx state machine on some message
+ * 
+ * @param topic_id id of the topic 
+ * @param fn serializer functoin
+ * @param msg pointer to ros typed data
+ * @return true publishing will happen
+ * @return false something failed
+ */
 bool nros_publish(uint8_t topic_id, nros_serialize_fn fn, const void* msg) {
     bool ok = publish_frame(topic_id, fn, msg);
     if (!ok) {
@@ -487,7 +439,9 @@ static size_t bounded_strlen(const char *s, size_t max) {
 // Sends a status report if one is due and the transmitter is free. Skipping a report is fine,
 // the next spin tries again.
 static void status_poll() {
-    if (!status_millis || !registration_complete || tx.state != TX_IDLE) {
+    // awaiting_ack: a re-registration is between a REGISTER and its ACK, and sending now would
+    // clear tx.is_registration and stall it
+    if (!status_millis || !registration_complete || tx.state != TX_IDLE || rx.awaiting_ack) {
         return;
     }
     uint32_t now = status_millis();
@@ -512,10 +466,7 @@ static void status_poll() {
         .board_name_len = (uint8_t)name_len,
         .version_len = (uint8_t)version_len,
     };
-    size_t payload_len = sizeof(payload) + name_len + version_len;
-    if (payload_len > NROS_BUFFER_SIZE) {
-        return;
-    }
+    size_t payload_len = sizeof(payload) + name_len + version_len; // fits, protocol.h checks it
     memcpy(tx.payload_buffer, &payload, sizeof(payload));
     memcpy(tx.payload_buffer + sizeof(payload), nros_board_name, name_len);
     memcpy(tx.payload_buffer + sizeof(payload) + name_len, version, version_len);
@@ -525,8 +476,9 @@ static void status_poll() {
         .topic_id = 0,
         .type = NROS_PACKET_STATUS,
     };
-    tx.frame_len = nros_stream_encode_frame(&tx.header, tx.payload_buffer, payload_len, tx.buffer, NROS_BUFFER_SIZE);
+    tx.frame_len = encode_tx_frame(tx.payload_buffer, payload_len);
     if (tx.frame_len == 0) {
+        printf("status frame too big, not sending\n");
         return;
     }
     tx.bytes_sent = 0;

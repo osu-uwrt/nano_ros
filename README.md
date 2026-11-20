@@ -3,6 +3,9 @@
 a lightweight firmware library, codegen tool, and host side agent
 
 ## usage
+git clone --recurse-submodules <your-repo-url>
+or if already cloned
+git submodule update --init --recursive
 
 ### ros.toml
 ros.toml is the file where topics are defined that will be used on a board
@@ -15,21 +18,19 @@ transport = "can"
 
 [[topics]]
 name = "imu_data"
-direction = "publisher"
-ros_type = "sensor_msgs/Imu"
-qos = "default"
+topic_type = "publisher"
+msg_type = "sensor_msgs/msg/Imu"
+qos = "sensor_data" # if omitted, defaults to "default"
 
 [[topics]]
 name = "bit_sub"
-direction = "subscriber"
-ros_type = "std_msgs/UInt8"
-qos = "default"
+topic_type = "subscriber"
+msg_type = "std_msgs/msg/UInt8"
 
 [[topics]]
 name = "firmware_status"
-direction = "publisher"
-ros_type = "riptide_msgs/FirmwareStatus"
-qos = "default"
+topic_type = "publisher"
+msg_type = "riptide_msgs2/msg/FirmwareStatus"
 ```
 
 `qos` is optional and defaults to `"default"`. It picks the QoS profile the agent uses for the topic's ROS publisher/subscription:
@@ -54,7 +55,7 @@ link libnanoros into your firmware and point `nano_ros_generate()` at your ros.t
 then #include both "nano_ros.h" and "nano_ros_codegen.h". for each topic you get a C struct for its message type, plus `nros_publish_<name>()` for publishers and `nros_set_<name>_subscriber_cb()` for subscribers
 
 #### board status
-call `nros_enable_status()` once and the board reports its health about once a second while connected. the agent publishes it on `/diagnostics`, so it shows up in `rqt_robot_monitor` and `ros2 topic echo /diagnostics`
+call `nros_enable_status()` once and the board reports its health about once a second once it has registered with the agent, using whichever framing you passed to `nros_init()`. the agent publishes it on `/diagnostics`, so it shows up in `rqt_robot_monitor` and `ros2 topic echo /diagnostics`
 
 ```c
 static uint32_t millis(void) { return to_ms_since_boot(get_absolute_time()); }
@@ -68,7 +69,7 @@ static void fill_status(nros_status_t *s) {
 nros_enable_status(millis, fill_status); // fill can be NULL
 ```
 
-each report has the board name (from ros.toml), uptime, version, reset reason, faults and how many `nros_publish` calls failed. it shows as an error when faults are set, and a warning when the last reset was a watchdog or brownout. if a board that was reporting goes quiet for 3 s, the agent marks it stale and keeps saying how long it's been
+each report has the board name (from ros.toml), uptime, version, reset reason, faults and how many `nros_publish` calls failed. it shows as an error when faults are set, and a warning when the last reset was a watchdog or brownout. each board gets its own entry, named `nano_ros: <board name>/peer_<id>` (the id is the transport's, e.g. the CAN client id), so boards running the same firmware don't collide. if a board that was reporting goes quiet for 3 s, the agent marks it stale and keeps saying how long it's been. a board that re-registers (e.g. after a reboot) starts over with a fresh entry
 
 ### codegen
 
@@ -84,6 +85,12 @@ $ ./nano_ros_codegen <path to ros.toml> --user-msgs <path to user msgs, i.e. rip
 ### nano_ros_agent
 
 spawn the agent on a port and go brr
+
+```bash
+$ nano_ros_agent serial /dev/ttyACM0 [baud]      # baud defaults to 115200
+```
+
+run it with no arguments for the usage. ROS arguments go after `--ros-args` as usual. ctrl-c stops it
 
 ## building
 

@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include "protocol.h"
 
+// user defined transport v-table that the library calls through 
 typedef struct {
     bool (*init)(void *ctx);
     bool (*open)();
@@ -36,7 +37,9 @@ typedef struct {
 typedef uint32_t (*nros_millis_fn)(void);
 typedef void (*nros_status_fill_fn)(nros_status_t *status);
 
+// topics that codegen spat out
 extern const nros_topic_t nros_topics[];
+// amount of topics in nros_topics
 extern const uint8_t nros_topic_count;
 extern const char nros_board_name[]; // [board] name from ros.toml
 

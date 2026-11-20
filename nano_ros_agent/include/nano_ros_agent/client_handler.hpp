@@ -45,10 +45,9 @@ struct OutboundMsg {
 
 class ClientHandlerNode : public rclcpp::Node {
 public:
-    using OutboundCallback = std::function<void (std::shared_ptr<rclcpp::SerializedMessage>)>;
 
-    ClientHandlerNode(const std::string &node_name, const rclcpp::NodeOptions &options, ThreadSafeQueue<OutboundMsg> &q)
-    : rclcpp::Node("nros_client_" + node_name, options), cb_data_queue_{q} {
+    ClientHandlerNode(const std::string &node_name, PeerID id, const rclcpp::NodeOptions &options, ThreadSafeQueue<DeviceMessage> &q)
+    : rclcpp::Node("nros_client_" + node_name, options), peer_{id}, cb_data_queue_{q} {
         diagnostics_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>("/diagnostics", 10);
         stale_timer_ = create_wall_timer(std::chrono::seconds(1), [this]() { check_stale(); });
         executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
@@ -62,7 +61,7 @@ public:
         }
     }
     void client_publish(WireFrame &frame);
-    void client_subscription_callback(uint8_t client_id, uint8_t topic_id, std::shared_ptr<rclcpp::SerializedMessage> msg);
+    void client_subscription_callback(PeerID peer, uint8_t topic_id, std::shared_ptr<rclcpp::SerializedMessage> msg);
     void on_client_connect(const std::vector<Topic> &new_topics);
     void on_client_disconnect();
     void publish_status(const WireFrame &frame);
@@ -74,15 +73,15 @@ private:
     uint32_t client_id_;
     rclcpp::executors::SingleThreadedExecutor::SharedPtr executor_;
     std::thread spin_thread_;
-    OutboundCallback out_cb_;
+    PeerID peer_;
     rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_pub_;
     // the board's last status report, republished as STALE when reports stop
     rclcpp::TimerBase::SharedPtr stale_timer_;
     std::mutex status_mutex_;
     std::optional<diagnostic_msgs::msg::DiagnosticStatus> last_status_;
     std::chrono::steady_clock::time_point last_status_time_;
-    ThreadSafeQueue<OutboundMsg> &cb_data_queue_;
-    Topic topics_[UINT8_MAX];
+    ThreadSafeQueue<DeviceMessage> &cb_data_queue_;
+    Topic topics_[UINT8_MAX + 1];
 };
 
 } // namespace nros
