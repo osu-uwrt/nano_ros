@@ -15,8 +15,8 @@ public:
     ~SerialTransport();
 
     bool init() override;
-    bool send_frame(const nros::WireFrame &frame, int32_t timeout) override;
-    bool recv_frame(nros::WireFrame &frame, int32_t timeout) override;
+    bool send_frame(const nros::PeerID to, const nros::WireFrame &frame, int32_t timeout) override;
+    bool recv_frame(nros::PeerID &from, nros::WireFrame &frame, int32_t timeout) override;
     nros::Readiness wait_ready(int32_t timeout_ms) override;
     bool fini() override;
 
