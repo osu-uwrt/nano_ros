@@ -149,7 +149,7 @@ size_t nros_packet_encode_frame(const nros_frame_header_t *hdr, const uint8_t *p
     if (cap < total) {
         return 0;
     }
-    out[0] = NROS_MAGIC0;   // harmless, and lets you eyeball frames in candump
+    out[0] = NROS_MAGIC0;
     out[1] = NROS_MAGIC1;
     out[2] = hdr->type;
     out[3] = hdr->topic_id;

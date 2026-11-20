@@ -89,7 +89,7 @@ void CanmoreTransport::handleMessage(uint8_t clientId, uint8_t subtype, std::spa
     }
 
     peer_client_id_ = clientId;
-    completed_frames_.push_back(std::move(frame));
+    completed_frames_.push_back({clientId, std::move(frame)});
 }
 
 void CanmoreTransport::handleDecodeError(uint8_t clientId, unsigned int errorCode) {
@@ -100,7 +100,22 @@ void CanmoreTransport::handleConflictingAgentError() {
     fprintf(stderr, "canmore: another agent is transmitting on %s! Is the old agent still running?\n", ifname_.c_str());
 }
 
-bool CanmoreTransport::send_frame(const nros::WireFrame &frame, int32_t timeout) {
+bool CanmoreTransport::broadcast_message(const std::vector<uint8_t> bytes) {
+    bool any_sent = false;
+    for (uint8_t id = 1; id <= 31; id++) {
+        try {
+            can_agent_->transmitMessage(id, NROS_SUBTYPE, bytes);
+            any_sent = true;
+        } catch (const std::exception &e) {
+            fprintf(stderr, "canmore: discover to client %u failed: %s\n", id, e.what());
+            connected = false;
+            return false;  // a send failing usually means the whole bus is down, no point continuing
+        }
+    }
+    return any_sent;   
+}
+
+bool CanmoreTransport::send_frame(const PeerID to, const nros::WireFrame &frame, int32_t timeout) {
     (void)timeout;
 
     if (!can_agent_) {
@@ -123,36 +138,22 @@ bool CanmoreTransport::send_frame(const nros::WireFrame &frame, int32_t timeout)
         memcpy(buffer.data() + sizeof(nros_frame_header_t), frame.payload.data(), frame.payload.size());
     }
 
-    uint8_t dest = (frame.header.type == NROS_PACKET_DISCOVER) ? 0 : peer_client_id_;
-
-    if (frame.header.type == NROS_PACKET_DISCOVER) {
-        // CANmore clients only accept frames addressed to their own ID; there is no real broadcast
-        bool any_sent = false;
-        for (uint8_t id = 1; id <= 31; id++) {
-            try {
-                can_agent_->transmitMessage(id, NROS_SUBTYPE, buffer);
-                any_sent = true;
-            } catch (const std::exception &e) {
-                fprintf(stderr, "canmore: discover to client %u failed: %s\n", id, e.what());
-                connected = false;
-                return false;  // a send failing usually means the whole bus is down, no point continuing
-            }
-        }
-        return any_sent;
+    if (to == PEER_BROADCAST) {
+        return broadcast_message(buffer);
     }
 
 
     try {
-        can_agent_->transmitMessage(dest, NROS_SUBTYPE, buffer);
+        can_agent_->transmitMessage(to, NROS_SUBTYPE, buffer);
     } catch (std::exception &e) {
-        fprintf(stderr, "canmore: send to client %u failed: %s\n", dest, e.what());
+        fprintf(stderr, "canmore: send to client %u failed: %s\n", to, e.what());
         return false;
     }
 
     return true;
 }
 
-bool CanmoreTransport::recv_frame(nros::WireFrame &frame, int32_t timeout) {
+bool CanmoreTransport::recv_frame(PeerID &from, nros::WireFrame &frame, int32_t timeout) {
     if (!can_agent_) {
         return false;
     }
@@ -162,7 +163,8 @@ bool CanmoreTransport::recv_frame(nros::WireFrame &frame, int32_t timeout) {
 
     while (true) {
         if (!completed_frames_.empty()) {
-            frame = std::move(completed_frames_.front());
+            from = completed_frames_.front().peer;
+            frame = std::move(completed_frames_.front().frame);
             completed_frames_.pop_front();
             return true;
         }

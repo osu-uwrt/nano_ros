@@ -40,8 +40,6 @@ static std::unique_ptr<nros::Transport> parse_transport(const std::vector<std::s
     }
 
     if (kind == "can") {
-        // fprintf(stderr, "the can transport isn't supported yet\n");
-        // return nullptr;
         if (args.size() < 3 || args.size() > 4) {
             usage(prog);
             return nullptr;

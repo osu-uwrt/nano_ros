@@ -313,7 +313,6 @@ void rx_poll() {
         return;
     }
     nros_dispatch(&hdr, payload);
-
 }
 
 void nros_spin() {

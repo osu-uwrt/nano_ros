@@ -18,21 +18,19 @@ transport = "can"
 
 [[topics]]
 name = "imu_data"
-direction = "publisher"
-ros_type = "sensor_msgs/Imu"
-qos = "default"
+topic_type = "publisher"
+msg_type = "sensor_msgs/msg/Imu"
+qos = "sensor_data" # if omitted, defaults to "default"
 
 [[topics]]
 name = "bit_sub"
-direction = "subscriber"
-ros_type = "std_msgs/UInt8"
-qos = "default"
+topic_type = "subscriber"
+msg_type = "std_msgs/msg/UInt8"
 
 [[topics]]
 name = "firmware_status"
-direction = "publisher"
-ros_type = "riptide_msgs/FirmwareStatus"
-qos = "default"
+topic_type = "publisher"
+msg_type = "riptide_msgs2/msg/FirmwareStatus"
 ```
 
 `qos` is optional and defaults to `"default"`. It picks the QoS profile the agent uses for the topic's ROS publisher/subscription:

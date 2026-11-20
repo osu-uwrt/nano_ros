@@ -11,11 +11,10 @@ public:
     ~CanmoreTransport();
 
     bool init() override;
-    bool send_frame(const nros::WireFrame &frame, int32_t timeout) override;
-    bool recv_frame(nros::WireFrame &frame, int32_t timeout) override;
+    bool send_frame(const nros::PeerID to, const nros::WireFrame &frame, int32_t timeout) override;
+    bool recv_frame(nros::PeerID &from, nros::WireFrame &frame, int32_t timeout) override;
     nros::Readiness wait_ready(int32_t timeout_ms) override;
     bool fini() override;
-
 private:
     // Canmore::AgentMsgHandler overrides
     void handleMessage(uint8_t clientId, uint8_t subtype, std::span<const uint8_t> data) override;
@@ -23,6 +22,7 @@ private:
     void handleConflictingAgentError() override;
     
     static const char *decode_error_str(unsigned int errorCode);
+    bool broadcast_message(const std::vector<uint8_t> bytes);
 
     /**
      * same as #define CANMORE_MSG_SUBTYPE_XRCE_DDS 0 from canbus driver, should add subtype to reflect
@@ -34,7 +34,7 @@ private:
     std::string ifname_;
     std::unique_ptr<Canmore::MsgAgent> can_agent_;
     std::unique_ptr<Canmore::PollGroup> group_;
-    std::deque<WireFrame> completed_frames_;
+    std::deque<DeviceMessage> completed_frames_;
     uint8_t peer_client_id_;
     
 };
