@@ -35,9 +35,9 @@ void ClientHandlerNode::on_client_connect(const std::vector<Topic> &topics) {
             topics_[t.id].handle = create_generic_subscription(t.topic_name, 
                 t.msg_type,
                 qos,
-                [this, client_id = client_id_, topic_id = topics_[t.id].id]
+                [this, peer = peer_, topic_id = topics_[t.id].id]
                 (std::shared_ptr<rclcpp::SerializedMessage> msg) {
-                    this->client_subscription_callback(client_id, topic_id, msg);
+                    this->client_subscription_callback(peer, topic_id, msg);
                 }
             );
         }
@@ -45,7 +45,7 @@ void ClientHandlerNode::on_client_connect(const std::vector<Topic> &topics) {
     }
 }
 
-void ClientHandlerNode::client_subscription_callback(uint8_t client_id, uint8_t topic_id, std::shared_ptr<rclcpp::SerializedMessage> msg) {
+void ClientHandlerNode::client_subscription_callback(PeerID peer, uint8_t topic_id, std::shared_ptr<rclcpp::SerializedMessage> msg) {
     const auto &byte_buf = msg->get_rcl_serialized_message();
 
     constexpr size_t ENCAP_HEADER_SIZE = 4;
@@ -55,11 +55,11 @@ void ClientHandlerNode::client_subscription_callback(uint8_t client_id, uint8_t 
 
     std::vector<uint8_t> bytes(byte_buf.buffer + ENCAP_HEADER_SIZE, byte_buf.buffer + byte_buf.buffer_length);
 
-    OutboundMsg out;
-    out.client_id = client_id;
+    DeviceMessage out;
+    out.peer = peer;
     out.frame.header.topic_id = topic_id;
     out.frame.header.type = NROS_PACKET_DATA;
-    out.frame.header.length = bytes.size();   // length of the stripped payload
+    out.frame.header.length = bytes.size();
     out.frame.payload = std::move(bytes);
     cb_data_queue_.push(out);
 }

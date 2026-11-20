@@ -41,10 +41,9 @@ struct OutboundMsg {
 
 class ClientHandlerNode : public rclcpp::Node {
 public:
-    using OutboundCallback = std::function<void (std::shared_ptr<rclcpp::SerializedMessage>)>;
 
-    ClientHandlerNode(const std::string &node_name, const rclcpp::NodeOptions &options, ThreadSafeQueue<OutboundMsg> &q)
-    : rclcpp::Node("nros_client_" + node_name, options), cb_data_queue_{q} {
+    ClientHandlerNode(const std::string &node_name, PeerID id, const rclcpp::NodeOptions &options, ThreadSafeQueue<DeviceMessage> &q)
+    : rclcpp::Node("nros_client_" + node_name, options), peer_{id}, cb_data_queue_{q} {
         executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
         executor_->add_node(this->get_node_base_interface());
         spin_thread_ = std::thread([this](){ executor_->spin(); });
@@ -56,7 +55,7 @@ public:
         }
     }
     void client_publish(WireFrame &frame);
-    void client_subscription_callback(uint8_t client_id, uint8_t topic_id, std::shared_ptr<rclcpp::SerializedMessage> msg);
+    void client_subscription_callback(PeerID peer, uint8_t topic_id, std::shared_ptr<rclcpp::SerializedMessage> msg);
     void on_client_connect(const std::vector<Topic> &new_topics);
     void on_client_disconnect();
 private:
@@ -66,9 +65,9 @@ private:
     uint32_t client_id_;
     rclcpp::executors::SingleThreadedExecutor::SharedPtr executor_;
     std::thread spin_thread_;
-    OutboundCallback out_cb_;
-    ThreadSafeQueue<OutboundMsg> &cb_data_queue_;
-    Topic topics_[UINT8_MAX];
+    PeerID peer_;
+    ThreadSafeQueue<DeviceMessage> &cb_data_queue_;
+    Topic topics_[UINT8_MAX + 1];
 };
 
 } // namespace nros
