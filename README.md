@@ -84,6 +84,9 @@ $ nano_ros_agent serial /dev/<name> [baud]      # baud defaults to 115200
 ```
 
 For clients connected over CAN using CANmore
+```bash
+$ nano_ros_agent can <can interface i.e. can0>
+```
 
 run it with no arguments for the usage. ROS arguments go after `--ros-args` as usual. ctrl-c stops it
 
