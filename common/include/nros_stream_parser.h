@@ -3,12 +3,12 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 #include "protocol.h"
 
 #define NROS_CRC16_POLY 0x1021
 #define NROS_CRC16_INIT 0xFFFF
-#define NROS_CRC_LEN 2
 
 typedef enum {
     HUNT_SYNC,
@@ -46,6 +46,9 @@ void nros_stream_parser_init(nros_stream_parser_t *p);
 void nros_stream_parser_feed(nros_stream_parser_t *p, const uint8_t data[], size_t len, nros_frame_cb cb, void *user_data);
 
 size_t nros_stream_encode_frame(const nros_frame_header_t *hdr, const uint8_t *payload, size_t payload_len, uint8_t *out_buf, size_t out_buf_cap);
+
+bool nros_packet_decode_frame(const uint8_t *in, size_t len, nros_frame_header_t *hdr, const uint8_t **payload);
+size_t nros_packet_encode_frame(const nros_frame_header_t *hdr, const uint8_t *payload, size_t payload_len, uint8_t *out, size_t cap);
 
 uint16_t crc16_update(uint16_t crc, uint8_t byte);
 uint16_t crc16_buf(const uint8_t *data, size_t len);
