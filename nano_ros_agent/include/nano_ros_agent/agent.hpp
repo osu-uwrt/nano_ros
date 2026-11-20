@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <variant>
@@ -38,7 +39,8 @@ private:
     nros_ack_status_t decode_registration_frame(WireFrame &frame, Topic &t);
     //void spawn_client(bool expect_multiple_clients);
     void spawn_client(const PeerID id, Session &s);
-    void send_discover();
+    void send_discover(PeerID to);
+    void send_ping(PeerID to);
     void send_ack(PeerID to, uint8_t topic_id, nros_ack_status_t status);
     void frame_dispatch(PeerID from, WireFrame &frame);
     void ack_client();
@@ -52,6 +54,7 @@ private:
     std::unordered_map<PeerID, Session> sessions_;
     ThreadSafeQueue<DeviceMessage> to_client_msg_queue_;
     Session session_to_spawn_ {};
+    std::chrono::steady_clock::time_point last_ping_;
     //Topic topics[UINT8_MAX] = { 0 }; // indexed by topic id (uint8 can change) 
     std::atomic<bool> running_ = false;
 };

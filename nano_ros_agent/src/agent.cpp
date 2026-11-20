@@ -48,26 +48,48 @@ void Agent::send_ack(PeerID to, uint8_t topic_id, nros_ack_status_t status) {
     printf("(peer %u) acked topic %hhu with status %hhu\n", to, p.topic_id, p.status);
 }
 
-void Agent::send_discover() {
+// Asks a board (or every board, with PEER_BROADCAST) to register from scratch
+void Agent::send_discover(PeerID to) {
     WireFrame frame;
     frame.header.type = NROS_PACKET_DISCOVER;
     frame.header.topic_id = 0;
     frame.header.length = 0;
-    transport_->send_frame(PEER_BROADCAST, frame, 0);
+    transport_->send_frame(to, frame, 0);
 }
+
+// Lets a registered board know the agent is still here; it reconnects if these stop
+void Agent::send_ping(PeerID to) {
+    WireFrame frame;
+    frame.header.type = NROS_PACKET_PING;
+    frame.header.topic_id = 0;
+    frame.header.length = 0;
+    transport_->send_frame(to, frame, 0);
+}
+
+static constexpr std::chrono::milliseconds PING_PERIOD{500};
 
 bool Agent::run() {
     if (!transport_->init()) {
         return false;
     }
     running_ = true;
-    send_discover();
+    send_discover(PEER_BROADCAST);
  
     PeerID from;
     WireFrame frame;
     while (running_ && rclcpp::ok()) {
         if (transport_->recv_frame(from, frame, 0)) {
             frame_dispatch(from, frame);
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_ping_ >= PING_PERIOD) {
+            last_ping_ = now;
+            for (auto &[peer, s] : sessions_) {
+                if (s.node) { // only registered boards watch for pings
+                    send_ping(peer);
+                }
+            }
         }
  
         // only this thread pops, so size() > 0 means wait_and_pop won't block
@@ -128,6 +150,14 @@ void Agent::frame_dispatch(PeerID from, WireFrame &frame) {
             break;
         }
         spawn_client(from, it->second);
+        break;
+    }
+
+    case NROS_PACKET_HELLO: {
+        // the board isn't registered (it reset, or lost us): drop what we had for it and start over
+        printf("(peer %u) says hello, asking it to register\n", from);
+        sessions_.erase(from);
+        send_discover(from);
         break;
     }
  
