@@ -3,6 +3,9 @@
 a lightweight firmware library, codegen tool, and host side agent
 
 ## usage
+git clone --recurse-submodules <your-repo-url>
+or if already cloned
+git submodule update --init --recursive
 
 ### ros.toml
 ros.toml is the file where topics are defined that will be used on a board
@@ -15,21 +18,19 @@ transport = "can"
 
 [[topics]]
 name = "imu_data"
-direction = "publisher"
-ros_type = "sensor_msgs/Imu"
-qos = "default"
+topic_type = "publisher"
+msg_type = "sensor_msgs/msg/Imu"
+qos = "sensor_data" # if omitted, defaults to "default"
 
 [[topics]]
 name = "bit_sub"
-direction = "subscriber"
-ros_type = "std_msgs/UInt8"
-qos = "default"
+topic_type = "subscriber"
+msg_type = "std_msgs/msg/UInt8"
 
 [[topics]]
 name = "firmware_status"
-direction = "publisher"
-ros_type = "riptide_msgs/FirmwareStatus"
-qos = "default"
+topic_type = "publisher"
+msg_type = "riptide_msgs2/msg/FirmwareStatus"
 ```
 
 `qos` is optional and defaults to `"default"`. It picks the QoS profile the agent uses for the topic's ROS publisher/subscription:
@@ -61,10 +62,10 @@ static uint32_t millis(void) { return to_ms_since_boot(get_absolute_time()); }
 
 nros_set_clock(millis);
 nros_set_connection_cb(on_connection); // optional, called with true / false
-nros_init(&transport, true);
+nros_init(&transport, true); // true: nros framing on a byte stream (serial), false: one frame per packet (CAN)
 ```
 
-`nros_is_connected()` says where it's at, and publishes return false while disconnected. without a clock it still registers whenever the agent asks, but it can't notice a lost agent
+`nros_is_connected()` says where it's at, and publishes return false while disconnected. this works the same with either framing, and the agent keeps track of each board separately, so one board resetting doesn't disturb the others. without a clock it still registers whenever the agent asks, but it can't notice a lost agent
 
 ### codegen
 
@@ -80,6 +81,12 @@ $ ./nano_ros_codegen <path to ros.toml> --user-msgs <path to user msgs, i.e. rip
 ### nano_ros_agent
 
 spawn the agent on a port and go brr
+
+```bash
+$ nano_ros_agent serial /dev/ttyACM0 [baud]      # baud defaults to 115200
+```
+
+run it with no arguments for the usage. ROS arguments go after `--ros-args` as usual. ctrl-c stops it
 
 ## building
 
