@@ -3,14 +3,14 @@
 a lightweight firmware library, codegen tool, and host side agent
 
 ## usage
-git clone --recurse-submodules <your-repo-url>
+git clone --recurse-submodules git@github.com:osu-uwrt/nano_ros.git
 or if already cloned
 git submodule update --init --recursive
 
 ### ros.toml
 ros.toml is the file where topics are defined that will be used on a board
 
-an example of a ros.toml file is as follows. (naming conventions will change)
+an example of a ros.toml file is as follows.
 ```toml
 [board]
 name = "foo_board"
@@ -54,6 +54,8 @@ link libnanoros into your firmware and point `nano_ros_generate()` at your ros.t
 
 then #include both "nano_ros.h" and "nano_ros_codegen.h". for each topic you get a C struct for its message type, plus `nros_publish_<name>()` for publishers and `nros_set_<name>_subscriber_cb()` for subscribers
 
+`nros_set_<name>_subscriber_cb()` expects a function pointer that takes as an argument a pointer to the type of the message for that topic and likewise, `nros_publish_<name>()` expects a pointer to the message type for that topic.
+
 ### codegen
 
 you only need to run codegen by hand to look at its output. it accepts a path to a ros.toml file, the ros installation prefix, and a directory of custom .msg packages
@@ -66,12 +68,17 @@ $ ./nano_ros_codegen <path to ros.toml> --user-msgs <path to user msgs, i.e. rip
 `--ros-prefix` defaults to the first entry of `AMENT_PREFIX_PATH`. generated files go in `generated/` next to the ros.toml unless you pass `--out-dir`. `--depfile <path>` also writes a Makefile-style list of every file codegen read, which is what the CMake integration uses
 
 ### nano_ros_agent
+It is expected that all of the types a client plans on using are sourced and built on the host side where nano_ros_agent is running. The clients do not need any ros2 type support for message types since nano_ros_codegen parses message files and builds the serde.
 
-spawn the agent on a port and go brr
+To use the agent, you can run it from the command line as follows
+
+For serial clients connected over USB
 
 ```bash
-$ nano_ros_agent serial /dev/ttyACM0 [baud]      # baud defaults to 115200
+$ nano_ros_agent serial /dev/<name> [baud]      # baud defaults to 115200
 ```
+
+For clients connected over CAN using CANmore
 
 run it with no arguments for the usage. ROS arguments go after `--ros-args` as usual. ctrl-c stops it
 
