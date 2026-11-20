@@ -30,6 +30,9 @@
                 ];
               })
               pkgs.colcon
+              # gs_usb CAN adapter support in the agent
+              pkgs.libusb1
+              pkgs.pkg-config
             ];
 
             # inputsFrom brings the packages but not the environment variables
