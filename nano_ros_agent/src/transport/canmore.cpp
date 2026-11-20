@@ -44,9 +44,12 @@ bool CanmoreTransport::init() {
         can_agent_ = std::make_unique<Canmore::MsgAgent>(idx, handler);
         group_ = std::make_unique<Canmore::PollGroup>();
         group_->addFd(*can_agent_);
+        wake_poll_fd_ = std::make_unique<WakePollFd>(wake_);
+        group_->addFd(*wake_poll_fd_);
     } catch (const std::exception &e) {
         fprintf(stderr, "canmore init: %s\n", e.what());
         group_.reset();
+        wake_poll_fd_.reset();
         can_agent_.reset();
         return false;
     }
@@ -57,21 +60,27 @@ bool CanmoreTransport::init() {
 }
 
 Readiness CanmoreTransport::wait_ready(int32_t timeout_ms) {
-    // Readiness r;
-    // try {
-    //     if (msg_inbox_.empty()) {
-    //         group_->processEvent(timeout_ms);
-    //     }
-    // } catch (std::exception &e) {
-    //     connected = false;
-    //     r.error = true;
-    //     return r;
-    // }
+    Readiness r;
+    if (!group_) {
+        r.error = true;
+        return r;
+    }
 
-    // r.readable = !msg_inbox_.empty();
-    // r.writable = connected;
-    // r.nothing_ready = !r.readable && !r.writable;
-    // return r;
+    // returns after one event, which is a message (handleMessage), a wake(), or a signal
+    try {
+        if (completed_frames_.empty()) {
+            group_->processEvent(timeout_ms);
+        }
+    } catch (std::exception &e) {
+        fprintf(stderr, "canmore: processEvent failed: %s\n", e.what());
+        connected = false;
+        r.error = true;
+        return r;
+    }
+
+    r.readable = !completed_frames_.empty();
+    r.nothing_ready = !r.readable;
+    return r;
 }
 
 // callback called by canmore
@@ -196,6 +205,7 @@ bool CanmoreTransport::recv_frame(PeerID &from, nros::WireFrame &frame, int32_t 
 bool CanmoreTransport::fini() {
     // group_ holds weak refs into agent_, drop it first
     group_.reset();
+    wake_poll_fd_.reset();
     can_agent_.reset();
     completed_frames_.clear();
     connected = false;

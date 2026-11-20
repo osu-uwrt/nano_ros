@@ -2,10 +2,18 @@
 #include <poll.h>
 #include <stdio.h>
 #include <string.h>
+#include <chrono>
+#include <thread>
 
 using namespace nros;
 
-Agent::Agent(std::unique_ptr<Transport> transport) : transport_(std::move(transport)) {}
+// how long run() sleeps with nothing to do before it checks running_ again
+static constexpr int32_t IDLE_WAIT_MS = 100;
+
+Agent::Agent(std::unique_ptr<Transport> transport) : transport_(std::move(transport)) {
+    // subscriptions queue messages for the client from the executor thread, so wake run() up to send them
+    to_client_msg_queue_.set_on_push([this] { transport_->wake(); });
+}
 
 nros_ack_status_t Agent::decode_registration_frame(WireFrame &frame, Topic &t) {
     if (frame.payload.size() < sizeof(nros_registration_payload_t)) {
@@ -62,21 +70,33 @@ bool Agent::run() {
     }
     running_ = true;
     send_discover();
+
+    // ctrl-c shuts rclcpp down from its signal thread, so wake the loop instead of waiting out IDLE_WAIT_MS
+    auto context = rclcpp::contexts::get_global_default_context();
+    auto on_shutdown = context->add_on_shutdown_callback([this] { stop(); });
  
     PeerID from;
     WireFrame frame;
+    DeviceMessage msg;
     while (running_ && rclcpp::ok()) {
-        if (transport_->recv_frame(from, frame, 0)) {
+        // sleeps until a client sends something, a subscription queues a message, stop(), or the timeout
+        Readiness r = transport_->wait_ready(IDLE_WAIT_MS);
+        if (r.error) {
+            // nothing reconnects the transport yet, so don't spin on a dead fd
+            std::this_thread::sleep_for(std::chrono::milliseconds(IDLE_WAIT_MS));
+        }
+
+        while (running_ && transport_->recv_frame(from, frame, 0)) {
             frame_dispatch(from, frame);
         }
  
-        // only this thread pops, so size() > 0 means wait_and_pop won't block
-        while (to_client_msg_queue_.size() > 0) {
-            DeviceMessage msg = to_client_msg_queue_.wait_and_pop();
+        // after reading, since reading can use up a wake()
+        while (to_client_msg_queue_.try_pop(msg)) {
             transport_->send_frame(msg.peer, msg.frame, 0);
         }
     }
  
+    context->remove_on_shutdown_callback(on_shutdown);
     running_ = false;
     sessions_.clear(); // stop the client nodes before the transport goes away
     transport_->fini();
@@ -152,6 +172,7 @@ void Agent::spawn_client(const PeerID peer, Session &s) {
 
 void Agent::stop() {
     running_ = false;
+    transport_->wake();
 }
 
 Agent::~Agent() {
