@@ -90,4 +90,31 @@ mod tests {
     fn qos_rejects_unknown() {
         assert!(parse("qos = \"bogus\"").is_err());
     }
+
+    /// ros.schema.json is written by hand for editors; this keeps its enum values in sync with
+    /// what codegen accepts.
+    #[test]
+    fn json_schema_enums_match() {
+        let schema: serde_json::Value = serde_json::from_str(include_str!("../ros.schema.json")).unwrap();
+        let topic = &schema["properties"]["topics"]["items"]["properties"];
+        let strings = |v: &serde_json::Value| -> Vec<String> {
+            v.as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect()
+        };
+
+        let qos: Vec<String> = topic["qos"]["oneOf"].as_array().unwrap().iter()
+            .map(|v| v["const"].as_str().unwrap().to_string()).collect();
+        for q in &qos {
+            assert!(parse(&format!("qos = \"{q}\"")).is_ok(), "schema lists qos {q}, codegen rejects it");
+        }
+        assert_eq!(qos.len(), 6, "a Qos variant was added or removed: update ros.schema.json");
+
+        for t in strings(&topic["topic_type"]["enum"]) {
+            let toml = format!("[board]\nname = \"b\"\ntransport = \"can\"\n\n[[topics]]\nname = \"t\"\ntopic_type = \"{t}\"\nmsg_type = \"std_msgs/msg/UInt8\"\n");
+            assert!(toml::from_str::<NanoRosConfig>(&toml).is_ok(), "schema lists topic_type {t}, codegen rejects it");
+        }
+        for t in strings(&schema["properties"]["board"]["properties"]["transport"]["enum"]) {
+            let toml = format!("topics = []\n\n[board]\nname = \"b\"\ntransport = \"{t}\"\n");
+            assert!(toml::from_str::<NanoRosConfig>(&toml).is_ok(), "schema lists transport {t}, codegen rejects it");
+        }
+    }
 }

@@ -1,3 +1,4 @@
+#:schema ./ros.schema.json
 [board]
 name = "foo_board"
 transport = "can" # can be usb or can

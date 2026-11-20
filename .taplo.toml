@@ -1,0 +1,5 @@
+# Editors using taplo (VS Code's Even Better TOML, Helix, Zed, ...) check every ros.toml here
+# against the schema as you type
+[[rule]]
+include = ["**/ros.toml"]
+schema.path = "nano_ros_codegen/ros.schema.json"
