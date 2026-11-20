@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::ros_toml_schema::NanoRosConfig;
+mod check;
 mod ros_toml_schema;
 mod msg_file_parser;
 mod codegen;
@@ -119,6 +120,9 @@ pub fn validate_topic_type(type_path: &str) -> Result<()> {
 
 fn main() -> Result<()> {
     let args: Vec<String> = args().collect();
+    if args.get(1).map(String::as_str) == Some("check") {
+        return check::run(&args[2..]);
+    }
     let (toml_path, ros_prefix, user_types, out_dir, depfile) = parse_args(&args)?;
     println!("toml_path: {}, ros_pref: {}, user_types_dir: {}, out_dir: {}", toml_path.display(), ros_prefix.display(), user_types.display(), out_dir.display());
 
