@@ -3,9 +3,14 @@
 a lightweight firmware library, codegen tool, and host side agent
 
 ## usage
-git clone --recurse-submodules git@github.com:osu-uwrt/nano_ros.git
-or if already cloned
-git submodule update --init --recursive
+```bash
+$ git clone --recurse-submodules <url this repo [https/ssh]>
+```
+or if already cloned and need submodules need updated
+```bash
+$ git submodule update --init --recursive
+```
+
 
 ### ros.toml
 ros.toml is the file where topics are defined that will be used on a board
