@@ -29,11 +29,10 @@ public:
     ~CanmoreTransport();
 
     bool init() override;
-    bool send_frame(const nros::WireFrame &frame, int32_t timeout) override;
-    bool recv_frame(nros::WireFrame &frame, int32_t timeout) override;
+    bool send_frame(const nros::PeerID to, const nros::WireFrame &frame, int32_t timeout) override;
+    bool recv_frame(nros::PeerID &from, nros::WireFrame &frame, int32_t timeout) override;
     nros::Readiness wait_ready(int32_t timeout_ms) override;
     bool fini() override;
-
 private:
     std::unique_ptr<CanmoreLink> open_link();
 
@@ -41,6 +40,9 @@ private:
     void handleMessage(uint8_t clientId, uint8_t subtype, std::span<const uint8_t> data) override;
     void handleDecodeError(uint8_t clientId, unsigned int errorCode) override;
     void handleConflictingAgentError() override;
+    
+    static const char *decode_error_str(unsigned int errorCode);
+    bool broadcast_message(const std::vector<uint8_t> bytes);
 
     /**
      * same as #define CANMORE_MSG_SUBTYPE_XRCE_DDS 0 from canbus driver, should add subtype to reflect
@@ -52,8 +54,7 @@ private:
     CanmoreOptions opts_;
     std::unique_ptr<CanmoreLink> link_;
     std::unique_ptr<Canmore::PollGroup> group_;
-    std::deque<WireFrame> completed_frames_;
-    uint8_t peer_client_id_ = 0;
+    std::deque<DeviceMessage> completed_frames_;
     std::chrono::steady_clock::time_point last_conflict_report_ {};
 };
 

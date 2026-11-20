@@ -17,6 +17,11 @@ struct AckStatus {
     nros_ack_status_t status = NROS_ACK_OK;
 };
 
+struct Session {
+    std::vector<Topic> pending_topics;
+    std::shared_ptr<ClientHandlerNode> node;
+};
+
 class Agent {
 public:
     Agent(std::unique_ptr<Transport> transport);
@@ -29,18 +34,24 @@ public:
     bool has_pending_send;
 private:
     // each node gets the same callback for all subscriptions
-    void frame_dispatch(WireFrame &frame);
+    //void frame_dispatch(WireFrame &frame);
     nros_ack_status_t decode_registration_frame(WireFrame &frame, Topic &t);
-    void spawn_client(bool expect_multiple_clients);
+    //void spawn_client(bool expect_multiple_clients);
+    void spawn_client(const PeerID id, Session &s);
+    void send_discover();
+    void send_ack(PeerID to, uint8_t topic_id, nros_ack_status_t status);
+    void frame_dispatch(PeerID from, WireFrame &frame);
     void ack_client();
 
     std::unique_ptr<Transport> transport_;
-    ThreadSafeQueue<OutboundMsg> to_client_msg_queue_;
-    //std::vector<std::shared_ptr<ClientHandlerNode>> clients_;
+    //ThreadSafeQueue<OutboundMsg> to_client_msg_queue_;
     std::shared_ptr<ClientHandlerNode> client_; // for testing
     std::vector<Topic> new_topics_;
     size_t client_id_idx_ = 0; // temp for dealing with client ids until its actually implemented
     AckStatus ack_ {};
+    std::unordered_map<PeerID, Session> sessions_;
+    ThreadSafeQueue<DeviceMessage> to_client_msg_queue_;
+    Session session_to_spawn_ {};
     //Topic topics[UINT8_MAX] = { 0 }; // indexed by topic id (uint8 can change) 
     std::atomic<bool> running_ = false;
 };

@@ -53,7 +53,4 @@ std::unique_ptr<CanmoreLink> make_socketcan_link(const std::string &ifname, Canm
 std::unique_ptr<CanmoreLink> make_gs_usb_link(const GsUsbOptions &opts, CanmoreMsgHandler &handler,
                                               std::span<const uint8_t> clientIdSelect = {});
 
-/** Describes a CANMORE_MSG_DECODER_ERROR_* code (Canmore::MsgAgent::lookupDecodeError is declared but not defined) */
-std::string canmore_decode_error_str(unsigned int errorCode);
-
 }  // namespace nros
