@@ -72,6 +72,13 @@ static nros_stream_parser_t parser = { 0 };
 
 static const uint8_t CDR_ENCAP_HEADER[4] = { 0x00, 0x01, 0x00, 0x00 };
 
+#define NROS_STATUS_PERIOD_MS 1000
+
+static nros_millis_fn status_millis;
+static nros_status_fill_fn status_fill;
+static uint32_t last_status_ms;
+static uint32_t dropped_publishes;
+
 // static void load_next_registration_frame() {
 //     if (tx.sending_reg_done_frame) {
 //         printf("done reg\n");
@@ -315,9 +322,12 @@ void rx_poll() {
     nros_dispatch(&hdr, payload);
 }
 
+static void status_poll();
+
 void nros_spin() {
     rx_poll();
     tx_poll();
+    status_poll();
 }
 
 bool nros_init(nros_transport_t *t, bool use_nros_framing) {
@@ -342,17 +352,7 @@ bool nros_init(nros_transport_t *t, bool use_nros_framing) {
     return true;
 }
 
-/**
- * @brief codegen calls through to this function with the generated id and serialization function
- *        and starts the tx state machine on some message
- * 
- * @param topic_id id of the topic 
- * @param fn serializer functoin
- * @param msg pointer to ros typed data
- * @return true publishing will happen
- * @return false something failed
- */
-bool nros_publish(uint8_t topic_id, nros_serialize_fn fn, const void* msg) {
+static bool publish_frame(uint8_t topic_id, nros_serialize_fn fn, const void* msg) {
     if (tx.state != TX_IDLE || !registration_complete) {
         return false;
     }
@@ -401,4 +401,87 @@ bool nros_publish(uint8_t topic_id, nros_serialize_fn fn, const void* msg) {
     printf("successful pub\n");
 
     return true;
+}
+
+/**
+ * @brief codegen calls through to this function with the generated id and serialization function
+ *        and starts the tx state machine on some message
+ * 
+ * @param topic_id id of the topic 
+ * @param fn serializer functoin
+ * @param msg pointer to ros typed data
+ * @return true publishing will happen
+ * @return false something failed
+ */
+bool nros_publish(uint8_t topic_id, nros_serialize_fn fn, const void* msg) {
+    bool ok = publish_frame(topic_id, fn, msg);
+    if (!ok) {
+        dropped_publishes++;
+    }
+    return ok;
+}
+
+void nros_enable_status(nros_millis_fn millis, nros_status_fill_fn fill) {
+    status_millis = millis;
+    status_fill = fill;
+    last_status_ms = millis() - NROS_STATUS_PERIOD_MS; // first report goes out as soon as we're connected
+}
+
+// strlen capped at max, for strings that go out with a uint8_t length
+static size_t bounded_strlen(const char *s, size_t max) {
+    size_t n = 0;
+    while (n < max && s[n]) {
+        n++;
+    }
+    return n;
+}
+
+// Sends a status report if one is due and the transmitter is free. Skipping a report is fine,
+// the next spin tries again.
+static void status_poll() {
+    // awaiting_ack: a re-registration is between a REGISTER and its ACK, and sending now would
+    // clear tx.is_registration and stall it
+    if (!status_millis || !registration_complete || tx.state != TX_IDLE || rx.awaiting_ack) {
+        return;
+    }
+    uint32_t now = status_millis();
+    if (now - last_status_ms < NROS_STATUS_PERIOD_MS) {
+        return;
+    }
+    last_status_ms = now;
+
+    nros_status_t status = { .faults = 0, .reset_reason = NROS_RESET_UNKNOWN, .version = NULL };
+    if (status_fill) {
+        status_fill(&status);
+    }
+    const char *version = status.version ? status.version : "";
+    size_t name_len = bounded_strlen(nros_board_name, UINT8_MAX);
+    size_t version_len = bounded_strlen(version, UINT8_MAX);
+
+    nros_status_payload_t payload = {
+        .uptime_ms = now,
+        .faults = status.faults,
+        .dropped_publishes = dropped_publishes,
+        .reset_reason = status.reset_reason,
+        .board_name_len = (uint8_t)name_len,
+        .version_len = (uint8_t)version_len,
+    };
+    size_t payload_len = sizeof(payload) + name_len + version_len; // fits, protocol.h checks it
+    memcpy(tx.payload_buffer, &payload, sizeof(payload));
+    memcpy(tx.payload_buffer + sizeof(payload), nros_board_name, name_len);
+    memcpy(tx.payload_buffer + sizeof(payload) + name_len, version, version_len);
+
+    tx.header = (nros_frame_header_t) {
+        .length = payload_len,
+        .topic_id = 0,
+        .type = NROS_PACKET_STATUS,
+    };
+    tx.frame_len = encode_tx_frame(tx.payload_buffer, payload_len);
+    if (tx.frame_len == 0) {
+        printf("status frame too big, not sending\n");
+        return;
+    }
+    tx.bytes_sent = 0;
+    tx.is_registration = false;
+    tx.state = TX_SENDING_FRAME;
 }

@@ -405,6 +405,12 @@ pub fn generate_core_code(config: &NanoRosConfig, out_dir: &PathBuf) -> Result<(
         generate_user_function(topic, &mut impl_code, &mut user_functions)?;
     }
     generate_topic_array(&config.topics, &mut impl_code)?;
+    // {:?} quotes and escapes it, which matches C for anything a board name should contain
+    writeln!(impl_code, "const char nros_board_name[] = {:?};", config.board.name)?;
+    // status reports send the name's length as a uint8_t
+    writeln!(impl_code, "_Static_assert(sizeof(nros_board_name) - 1 <= UINT8_MAX,")?;
+    writeln!(impl_code, "    \"board name in ros.toml is {} bytes, longer than the 255 a status report can carry\");\n",
+        config.board.name.len())?;
     generate_wire_checks(&config.topics, &mut impl_code)?;
     generate_function_protos(&user_functions, &exposed_serde, &mut header)?;
     writeln!(header)?;

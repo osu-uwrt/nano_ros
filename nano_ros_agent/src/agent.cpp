@@ -131,6 +131,15 @@ void Agent::frame_dispatch(PeerID from, WireFrame &frame) {
         break;
     }
  
+    case NROS_PACKET_STATUS: {
+        auto it = sessions_.find(from);
+        if (it == sessions_.end() || !it->second.node) {
+            break; // boards keep reporting while they re-register after an agent restart, nothing to publish on yet
+        }
+        it->second.node->publish_status(frame);
+        break;
+    }
+ 
     default:
         fprintf(stderr, "(peer %u) unknown packet type %hhu\n", from, frame.header.type);
         break;
