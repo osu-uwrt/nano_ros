@@ -2,6 +2,8 @@ project(libnanoros)
 cmake_minimum_required(VERSION 3.13)
 add_library(libnanoros INTERFACE)
 
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/nano_ros_generate.cmake)
+
 set(UCDR_SUPERBUILD OFF CACHE BOOL "" FORCE)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../external/micro_cdr/Micro-CDR-2.0.2
                   ${CMAKE_CURRENT_BINARY_DIR}/microcdr)

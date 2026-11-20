@@ -7,6 +7,32 @@ extern "C" {
 
 using namespace nros;
 
+// Stand-in for Canmore::MsgAgent::lookupDecodeError, which is declared but never implemented
+const char *CanmoreTransport::decode_error_str(unsigned int errorCode) {
+    switch (errorCode) {
+    case CANMORE_MSG_DECODER_ERROR_BAD_SEQ_NUM:
+        return "bad sequence number";
+    case CANMORE_MSG_DECODER_ERROR_ZERO_LENGTH_PACKET:
+        return "zero length packet";
+    case CANMORE_MSG_DECODER_ERROR_UNEXPECTED_DATA:
+        return "unexpected data";
+    case CANMORE_MSG_DECODER_ERROR_CRC_FAIL:
+        return "CRC failure";
+    case CANMORE_MSG_DECODER_ERROR_SEQ_ZERO_NOT_EXTENDED:
+        return "sequence zero not extended";
+    case CANMORE_MSG_DECODER_ERROR_MSG_TOO_LARGE:
+        return "message too large";
+    case CANMORE_MSG_DECODER_ERROR_MSG_TOO_SMALL:
+        return "message too small";
+    case CANMORE_MSG_DECODER_ERROR_ROLLOVER_WITH_CANFD:
+        return "sequence rollover with CAN FD";
+    case CANMORE_MSG_DECODER_ERROR_INVALID_CLIENT_ID:
+        return "invalid client id";
+    default:
+        return "unknown error";
+    }
+}
+
 bool CanmoreTransport::init() {
     uint32_t idx = if_nametoindex(ifname_.c_str());
     if (!idx) {
@@ -63,10 +89,33 @@ void CanmoreTransport::handleMessage(uint8_t clientId, uint8_t subtype, std::spa
     }
 
     peer_client_id_ = clientId;
-    completed_frames_.push_back(std::move(frame));
+    completed_frames_.push_back({clientId, std::move(frame)});
 }
 
-bool CanmoreTransport::send_frame(const nros::WireFrame &frame, int32_t timeout) {
+void CanmoreTransport::handleDecodeError(uint8_t clientId, unsigned int errorCode) {
+    fprintf(stderr, "canmore: decode error from client %u: %s (%u)\n", (unsigned) clientId, decode_error_str(errorCode), errorCode);
+}
+
+void CanmoreTransport::handleConflictingAgentError() {
+    fprintf(stderr, "canmore: another agent is transmitting on %s! Is the old agent still running?\n", ifname_.c_str());
+}
+
+bool CanmoreTransport::broadcast_message(const std::vector<uint8_t> bytes) {
+    bool any_sent = false;
+    for (uint8_t id = 1; id <= 31; id++) {
+        try {
+            can_agent_->transmitMessage(id, NROS_SUBTYPE, bytes);
+            any_sent = true;
+        } catch (const std::exception &e) {
+            fprintf(stderr, "canmore: discover to client %u failed: %s\n", id, e.what());
+            connected = false;
+            return false;  // a send failing usually means the whole bus is down, no point continuing
+        }
+    }
+    return any_sent;   
+}
+
+bool CanmoreTransport::send_frame(const PeerID to, const nros::WireFrame &frame, int32_t timeout) {
     (void)timeout;
 
     if (!can_agent_) {
@@ -89,19 +138,22 @@ bool CanmoreTransport::send_frame(const nros::WireFrame &frame, int32_t timeout)
         memcpy(buffer.data() + sizeof(nros_frame_header_t), frame.payload.data(), frame.payload.size());
     }
 
-    uint8_t dest = (frame.header.type == NROS_PACKET_DISCOVER) ? 0 : peer_client_id_;
+    if (to == PEER_BROADCAST) {
+        return broadcast_message(buffer);
+    }
+
 
     try {
-        can_agent_->transmitMessage(dest, NROS_SUBTYPE, buffer);
+        can_agent_->transmitMessage(to, NROS_SUBTYPE, buffer);
     } catch (std::exception &e) {
-        fprintf(stderr, "canmore: send to client %u failed: %s\n", dest, e.what());
+        fprintf(stderr, "canmore: send to client %u failed: %s\n", to, e.what());
         return false;
     }
 
     return true;
 }
 
-bool CanmoreTransport::recv_frame(nros::WireFrame &frame, int32_t timeout) {
+bool CanmoreTransport::recv_frame(PeerID &from, nros::WireFrame &frame, int32_t timeout) {
     if (!can_agent_) {
         return false;
     }
@@ -111,7 +163,8 @@ bool CanmoreTransport::recv_frame(nros::WireFrame &frame, int32_t timeout) {
 
     while (true) {
         if (!completed_frames_.empty()) {
-            frame = std::move(completed_frames_.front());
+            from = completed_frames_.front().peer;
+            frame = std::move(completed_frames_.front().frame);
             completed_frames_.pop_front();
             return true;
         }
@@ -137,5 +190,18 @@ bool CanmoreTransport::recv_frame(nros::WireFrame &frame, int32_t timeout) {
 
     }
 
+
+}
+
+bool CanmoreTransport::fini() {
+    // group_ holds weak refs into agent_, drop it first
+    group_.reset();
+    can_agent_.reset();
+    completed_frames_.clear();
+    connected = false;
+    return true;
+}
+
+CanmoreTransport::~CanmoreTransport() {
 
 }

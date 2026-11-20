@@ -3,6 +3,9 @@
 a lightweight firmware library, codegen tool, and host side agent
 
 ## usage
+git clone --recurse-submodules <your-repo-url>
+or if already cloned
+git submodule update --init --recursive
 
 ### ros.toml
 ros.toml is the file where topics are defined that will be used on a board
@@ -15,47 +18,60 @@ transport = "can"
 
 [[topics]]
 name = "imu_data"
-direction = "publisher"
-ros_type = "sensor_msgs/Imu"
-qos = "default"
+topic_type = "publisher"
+msg_type = "sensor_msgs/msg/Imu"
+qos = "sensor_data" # if omitted, defaults to "default"
 
 [[topics]]
 name = "bit_sub"
-direction = "subscriber"
-ros_type = "std_msgs/UInt8"
-qos = "default"
+topic_type = "subscriber"
+msg_type = "std_msgs/msg/UInt8"
 
 [[topics]]
 name = "firmware_status"
-direction = "publisher"
-ros_type = "riptide_msgs/FirmwareStatus"
-qos = "default"
+topic_type = "publisher"
+msg_type = "riptide_msgs2/msg/FirmwareStatus"
 ```
+
+`qos` is optional and defaults to `"default"`. It picks the QoS profile the agent uses for the topic's ROS publisher/subscription:
+
+| `qos` | profile |
+|---|---|
+| `default` | rclcpp default: reliable, volatile, keep last 10 |
+| `sensor_data` | `rclcpp::SensorDataQoS`: best effort, volatile, keep last 5 |
+| `reliable` | reliable, volatile, keep last 10 |
+| `best_effort` | best effort, volatile, keep last 10 |
+| `transient_local` | reliable, transient local (latched), keep last 1 |
+| `system_default` | `rclcpp::SystemDefaultsQoS` |
+
+the agent rejects a registration with an unknown QoS value by ACKing it with a nonzero status (see `nros_ack_status_t` in `common/include/protocol.h`).
 
 nano_ros_codegen reads this file and supplies the user with the code they'll need to publish/subscribe and gives the firmware library code an array of structures to use.
 
-this should be ran first. 
+### libnanoros
+
+link libnanoros into your firmware and point `nano_ros_generate()` at your ros.toml (see [building libnanoros](#libnanoros-1)). the codegen runs as part of your build, so there's no separate step
+
+then #include both "nano_ros.h" and "nano_ros_codegen.h". for each topic you get a C struct for its message type, plus `nros_publish_<name>()` for publishers and `nros_set_<name>_subscriber_cb()` for subscribers
 
 ### codegen
 
-codegen will accept a path to a ros.toml file, a path to the users ros installation prefix, and a path to a users custom .msg types
+you only need to run codegen by hand to look at its output. it accepts a path to a ros.toml file, the ros installation prefix, and a directory of custom .msg packages
 
 for example,
-```bash 
+```bash
 $ ./nano_ros_codegen <path to ros.toml> --user-msgs <path to user msgs, i.e. riptide_core> --ros-prefix <path to ros prefix, i.e. /opt/ros/humble>
 ```
 
-as of now (will change), generated files get spit out next to the ros.toml file supplied
-
-### libnanoros
-
-once code has been generated, you can use it in your project with libnanoros
-
-note: you should #include both "nano_ros.h" and "nano_ros_codegen.h"
+`--ros-prefix` defaults to the first entry of `AMENT_PREFIX_PATH`. generated files go in `generated/` next to the ros.toml unless you pass `--out-dir`. `--depfile <path>` also writes a Makefile-style list of every file codegen read, which is what the CMake integration uses
 
 ### nano_ros_agent
 
-spawn the agent on a port and go brr. with no port it uses `/dev/nros-ros` (see below)
+```bash
+$ nano_ros_agent serial [device] [baud]      # device defaults to /dev/nros-ros (see below), baud to 115200
+```
+
+run it with no arguments for the usage. ROS arguments go after `--ros-args` as usual. ctrl-c stops it
 
 ### USB device names
 
@@ -101,11 +117,11 @@ add the --release flag for a prod build
 
 the binary resides in target/debug/nano_ros_codegen if you didn't compile with the --release flag
 
-### libnanoros 
+### libnanoros
 note: for the time being, this is meant to be linked into a project inside of titan firmware via cmake
 
-add libnanoros as a subdir and link into project. For example
-```bash
+add libnanoros as a subdir, link it into your target, and call `nano_ros_generate()` on the same target. For example
+```cmake
 add_subdirectory(
     ${CMAKE_CURRENT_SOURCE_DIR}/<path to libnanoros root>
     ${CMAKE_CURRENT_BINARY_DIR}/libnanoros # only needed if outside current cmake tree
@@ -114,8 +130,16 @@ add_subdirectory(
 target_link_libraries(<target name> PUBLIC
     libnanoros
 )
+
+nano_ros_generate(<target name> ros.toml
+    USER_MSGS <path to user msgs, i.e. riptide_core> # optional
+    ROS_PREFIX /opt/ros/humble                        # optional, defaults to AMENT_PREFIX_PATH
+)
 ```
-if the generated code is not being compiled in, evil linky errors ensue
+
+this builds nano_ros_codegen from this repo with cargo (so it always matches libnanoros), runs it into the build directory, and compiles the generated code into the target. it reruns when ros.toml or any .msg file it uses changes. relative paths are relative to the CMakeLists.txt calling it
+
+cargo needs to be on your PATH (it is in the nix dev shell). to use a prebuilt codegen instead, configure with `-DNANO_ROS_CODEGEN_EXECUTABLE=<path>`
 
 ### nano_ros_agent
 

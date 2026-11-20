@@ -6,6 +6,7 @@ transport = "can" # can be usb or can
 name = "imu_data"
 topic_type = "publisher"
 msg_type = "sensor_msgs/msg/Imu"
+qos = "sensor_data"
 
 [[topics]]
 name = "bit_sub"
