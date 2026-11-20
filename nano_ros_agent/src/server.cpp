@@ -9,9 +9,9 @@
 
 static void usage(const char *prog) {
     fprintf(stderr,
-            "usage: %s serial <device> [baud]\n"
+            "usage: %s serial [device] [baud]\n"
             "\n"
-            "serial: baud defaults to 115200\n",
+            "serial: device defaults to /dev/nros-ros, baud to 115200\n",
             prog);
 }
 
@@ -30,13 +30,15 @@ static std::unique_ptr<nros::Transport> parse_transport(const std::vector<std::s
     }
 
     if (kind == "serial") {
-        if (args.size() < 3 || args.size() > 4) {
+        if (args.size() > 4) {
             usage(prog);
             return nullptr;
         }
         // SerialTransport keeps these pointers; args lives in main for as long as the transport does
+        // /dev/nros-ros comes from udev/70-nano-ros.rules
+        const char *port = args.size() >= 3 ? args[2].c_str() : "/dev/nros-ros";
         const char *baud = args.size() == 4 ? args[3].c_str() : "115200";
-        return std::make_unique<nros::SerialTransport>(args[2].c_str(), baud);
+        return std::make_unique<nros::SerialTransport>(port, baud);
     }
 
     if (kind == "can") {

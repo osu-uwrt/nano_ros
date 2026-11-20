@@ -1,0 +1,28 @@
+# Stable names for the two USB serial ports of a Titan board (titan_dual_stdio_usb):
+#   interface 00, "Board CDC": the board's stdio (printf)    -> /dev/nros-log
+#   interface 02, "Micro-ROS": the stream the agent talks to -> /dev/nros-ros
+#
+# The links follow the board across replugs, even if the old ttyACM is still held open and the
+# kernel picks a new number. With several boards plugged in, /dev/nros-ros and /dev/nros-log point
+# at the most recent one; /dev/nros/<serial>/ros and /dev/nros/<serial>/log are per board, where
+# <serial> is the Pico's unique ID.
+#
+# Also lets the logged-in user open the ports without being in the dialout group, and keeps
+# ModemManager from probing them with AT commands.
+#
+# Install: see "USB device names" in the README.
+
+ACTION=="remove", GOTO="nano_ros_end"
+SUBSYSTEM!="tty", GOTO="nano_ros_end"
+
+# Matching the manufacturer too keeps plain Picos (same VID/PID) out
+ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="000a", ATTRS{manufacturer}=="OSU UWRT", ENV{NANO_ROS_PORT}="1"
+ENV{NANO_ROS_PORT}!="1", GOTO="nano_ros_end"
+
+IMPORT{builtin}="usb_id"
+ENV{ID_MM_DEVICE_IGNORE}="1", TAG+="uaccess"
+
+ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="nros-log", SYMLINK+="nros/$env{ID_SERIAL_SHORT}/log"
+ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="nros-ros", SYMLINK+="nros/$env{ID_SERIAL_SHORT}/ros"
+
+LABEL="nano_ros_end"
