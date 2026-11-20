@@ -2,8 +2,13 @@
 #include <poll.h>
 #include <stdio.h>
 #include <string.h>
+#include <chrono>
+#include <thread>
 
 using namespace nros;
+
+// how often to try reopening the transport after it drops (e.g. the board was unplugged or reset)
+static constexpr std::chrono::milliseconds RECONNECT_INTERVAL { 1000 };
 
 Agent::Agent(std::unique_ptr<Transport> transport) : transport_(std::move(transport)) {}
 
@@ -56,6 +61,39 @@ void Agent::send_discover() {
     transport_->send_frame(PEER_BROADCAST, frame, 0);
 }
 
+void Agent::drop_sessions() {
+    // destroying a node joins its executor thread, so no callback can queue data after this
+    sessions_.clear();
+    to_client_msg_queue_.clear();
+}
+
+bool Agent::reconnect() {
+    fprintf(stderr, "transport disconnected, dropping %zu session(s) and reconnecting\n", sessions_.size());
+    drop_sessions();
+    transport_->fini();
+
+    bool warned = false;
+    while (running_ && rclcpp::ok()) {
+        // wait first: gives a reset board time to come back, and keeps a bus that opens but
+        // can't send from spinning
+        std::this_thread::sleep_for(RECONNECT_INTERVAL);
+        if (transport_->init()) {
+            send_discover(); // every client registers its topics again
+            if (transport_->is_connected()) {
+                printf("transport reconnected\n");
+                return true;
+            }
+            transport_->fini();
+        }
+        if (!warned) {
+            fprintf(stderr, "couldn't reopen the transport, retrying every %lld ms\n",
+                    static_cast<long long>(RECONNECT_INTERVAL.count()));
+            warned = true;
+        }
+    }
+    return false;
+}
+
 bool Agent::run() {
     if (!transport_->init()) {
         return false;
@@ -66,12 +104,17 @@ bool Agent::run() {
     PeerID from;
     WireFrame frame;
     while (running_ && rclcpp::ok()) {
+        if (!transport_->is_connected() && !reconnect()) {
+            break;
+        }
+
         if (transport_->recv_frame(from, frame, 0)) {
             frame_dispatch(from, frame);
         }
  
-        // only this thread pops, so size() > 0 means wait_and_pop won't block
-        while (to_client_msg_queue_.size() > 0) {
+        // only this thread pops, so size() > 0 means wait_and_pop won't block.
+        // stop once the transport drops: reconnect() throws the rest away
+        while (to_client_msg_queue_.size() > 0 && transport_->is_connected()) {
             DeviceMessage msg = to_client_msg_queue_.wait_and_pop();
             transport_->send_frame(msg.peer, msg.frame, 0);
         }

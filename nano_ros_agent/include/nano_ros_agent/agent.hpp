@@ -42,6 +42,10 @@ private:
     void send_ack(PeerID to, uint8_t topic_id, nros_ack_status_t status);
     void frame_dispatch(PeerID from, WireFrame &frame);
     void ack_client();
+    // closes the dropped transport and keeps reopening it until DISCOVER goes out. false if the agent was stopped first
+    bool reconnect();
+    // forgets every client from the old connection so each one registers from scratch
+    void drop_sessions();
 
     std::unique_ptr<Transport> transport_;
     //ThreadSafeQueue<OutboundMsg> to_client_msg_queue_;
